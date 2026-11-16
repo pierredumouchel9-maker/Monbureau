@@ -403,14 +403,15 @@ App.circo = (() => {
       return bits.join(' · ');
     };
     const rowOf = q => rows.find(r => r.p.id === q.id) || {p: q, e: entry(c, q)};
+    const jauneOf = r => { const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut); return sigList(c, r.p, r.e, ps, ev).some(x => SIG_JAUNE.includes(x)); };
     const linesOf = (l, nomme) => l.flatMap((r, bi) => {
-      const out = [{name: nm(r.p), d: detail(r, nomme), bi}];
+      const out = [{name: nm(r.p), d: detail(r, nomme), bi, hi: jauneOf(r)}];
       const sp = nomme ? spouseOf(r.p) : null;
       if (sp) { const sr = rowOf(sp); out.push({name: `Épouse : ${sp.prenom || ''}`, d: activite(sr).join(' · '), sub: true, bi}); }
       return out;
     });
     // Signalements : lignes surlignées et évolutions depuis le cycle précédent, regroupées par motif
-    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'Réactivé', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
+    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'Réactivé', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
     const sigGroups = {};
     for (const r of allRows) {
       const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut);
@@ -424,7 +425,7 @@ App.circo = (() => {
       const doc = await PDFDocument.create(); doc.setTitle(`Bilan ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
       const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
       const W = 841.89, H = 595.28, M = 26, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
-      const jaune = rgb(1, .97, .78), ciel = rgb(.86, .93, .99), orange = rgb(1, .92, .82), red = rgb(.78, .1, .1);
+      const jaune2 = rgb(1, .91, .4), jaune = rgb(1, .97, .78), ciel = rgb(.86, .93, .99), orange = rgb(1, .92, .82), red = rgb(.78, .1, .1);
       const page = doc.addPage([W, H]); let y = H - M, over = false;
       const S = v => v * k;
       const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(8.5), font: o.bold ? B : R, color: o.color || ink});
@@ -470,7 +471,8 @@ App.circo = (() => {
       need(maxN * lh);
       for (let kk = 0; kk < maxN; kk++) {
         cols4.forEach((l, gi) => { const ln = l[kk]; if (!ln) return;
-          if (ln.bi % 2 === 0) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lh - S(1), width: cw + 4, height: lh, color: ciel});
+          if (ln.hi) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lh - S(1), width: cw + 4, height: lh, color: jaune2});
+          else if (ln.bi % 2 === 0) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lh - S(1), width: cw + 4, height: lh, color: ciel});
           const cx = M + gi * (cw + 10) + (ln.sub ? S(9) : 0), wmax = cw - (ln.sub ? S(9) : 0);
           const f1 = ln.sub ? R : B, s1 = ln.sub ? fd : fs;
           const n1 = fit(ln.name, f1, s1, wmax * .58), w1 = f1.widthOfTextAtSize(n1, s1);
@@ -499,6 +501,7 @@ App.circo = (() => {
           for (const w of words) { const nx = cur ? cur + ' ' + w : w; if (R.widthOfTextAtSize(T(nx), fs) > wmax - lw && cur) { out.push(cur); cur = w; } else cur = nx; }
           if (cur) out.push(cur);
           need(out.length * lh);
+          if (SIG_JAUNE.includes(m)) page.drawRectangle({x: M - 2, y: y - out.length * lh - S(1), width: lw + Math.max(...out.map(l => R.widthOfTextAtSize(T(l), fs))) + 6, height: out.length * lh, color: jaune2});
           txt(lab, M, y - S(8), {bold: true, size: fs, color: m === 'AE' || m === 'Radié' ? rgb(.78, .1, .1) : ink});
           out.forEach((l, i) => { txt(l, M + lw, y - S(8), {size: fs}); y -= lh; });
         }
@@ -574,7 +577,8 @@ App.circo = (() => {
   }
   // Ligne à surligner : nouveau PNB, baptême, nouveau PP, nouveau PAP, proposition comme ancien ou assistant
   const SIGNALS = ['Nouveau PNB', 'Baptême', 'Nouveau PP', 'Nouveau PAP', 'Proposition ancien', 'Proposition assistant'];
-  const SIG_ONLY = ['Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'Proposition ancien', 'Proposition assistant', 'Sans raison'];
+  const SIG_ONLY = ['Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Sans raison'];
+  const SIG_JAUNE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions'];   // surlignés en jaune dans le bilan PDF
   const SIG_LABEL = x => x === 'Sans raison' ? 'Surligner sans raison' : x;
   const hasAE = t => /(^|[^A-Za-zÀ-ÿ])AE([^A-Za-zÀ-ÿ]|$)/.test(t || '');
   // Texte du suivi avec « AE » en gras rouge surligné
@@ -611,7 +615,9 @@ App.circo = (() => {
     if (e && e.fct !== undefined) return e.fct;
     return sortedCycles().at(-1)?.id === c.id ? (p.fonction || '') : undefined;
   }
-  function prevStatut(c, p) { const pc = prevCycle(c); const pe = pc && store().suivi?.[pc.id]?.[p.id]; return pe ? (pe.statut || '') : undefined; }
+  // Dernière fiche enregistrée avant le cycle c (on remonte les cycles : un statut non retouché se prolonge)
+  function lastStored(c, p) { for (const x of sortedCycles().filter(y => y.code < c.code).reverse()) { const pe = store().suivi?.[x.id]?.[p.id]; if (pe) return pe; } return null; }
+  function prevStatut(c, p) { const pe = lastStored(c, p); return pe ? (pe.statut || '') : undefined; }
   // Couleur de ligne : IN gris, ancien bleu foncé, assistant bleu clair, PP orange
   function rowStyle(p, e, f = p.fonction) {
     if (e.statut === 'IN') return 'background:#e3e3e3;color:#555';
@@ -669,7 +675,7 @@ App.circo = (() => {
   function entry(c, p) {
     const S = suivi(c);
     if (!S[p.id]) {
-      const prev = prevCycle(c), pe = prev && store().suivi?.[prev.id]?.[p.id];
+      const pe = lastStored(c, p);
       return {statut: pe ? pe.statut || '' : '', heures: null, eb: null, pa: null, ir: null, $new: true};
     }
     return S[p.id];
@@ -1004,18 +1010,66 @@ App.circo = (() => {
     });
   }
 
-  // En-tête commun : Tableau de bord | Proclamateurs
+
+  /* ---------- Comptabilité : résolution pour soutenir l'œuvre mondiale ----------
+     Résolution = quote-part × nombre de proclamateurs (total des S-21 validées du cycle ;
+     tant qu'aucune S-21 n'est pointée, le nombre de proclamateurs de la liste). */
+  const euro = v => (Math.round(v * 100) / 100).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
+  const num = v => { const x = parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')); return isNaN(x) ? null : x; };
+  function proclCount(c, asm) {
+    const procl = members(asm).map(p => entry(c, p)).filter(e => !DEPARTS.includes(e.evt) && (ACTIF(e.statut) || e.statut === 'PNB'));
+    const s21 = procl.filter(e => e.s21).length;
+    return {liste: procl.length, s21, n: s21 || procl.length, source: s21 ? 'S-21' : 'liste'};
+  }
+  function comptaView(el, state) {
+    const S = store(), cycles = sortedCycles(), asms = S.assemblees.filter(a => !isGroup(a));
+    if (!cycles.length || !asms.length) { el.innerHTML = `${header('comptabilite')}<div class="notice">Importez d’abord le classeur d’analyse depuis le tableau de bord.</div>`; bindHeader(el); return; }
+    const C = S.compta ??= {quote: null, asm: {}};
+    const c = cycles.find(x => x.id === state.cycle) || cycles.at(-1); state.cycle = c.id;
+    let tN = 0, tR = 0, tS = 0;
+    const lines = asms.map(a => {
+      const pc = proclCount(c, a), cfg = C.asm[a] || {}, q = num(cfg.quote) ?? num(C.quote), res = q === null ? null : q * pc.n, sm = num(cfg.soldeMax);
+      tN += pc.n; if (res !== null) tR += res; if (sm !== null) tS += sm;
+      return `<tr data-asm="${api.esc(a)}"><td><strong>${api.esc(a)}</strong></td>
+        <td style="text-align:right"><strong>${pc.n}</strong><div class="small muted">${pc.source === 'S-21' ? `S-21 validées · ${pc.liste} dans la liste` : 'S-21 non pointées : liste'}</div></td>
+        <td style="text-align:right"><input data-k="quote" inputmode="decimal" placeholder="${num(C.quote) === null ? '' : String(num(C.quote)).replace('.', ',')}" value="${cfg.quote === undefined ? '' : String(cfg.quote).replace('.', ',')}" style="width:90px;text-align:right;padding:4px 6px"></td>
+        <td style="text-align:right;font-weight:700">${res === null ? '<span class="muted">—</span>' : euro(res)}</td>
+        <td style="text-align:right"><input data-k="soldeMax" inputmode="decimal" value="${cfg.soldeMax === undefined ? '' : String(cfg.soldeMax).replace('.', ',')}" style="width:110px;text-align:right;padding:4px 6px"></td></tr>`;
+    }).join('');
+    el.innerHTML = `${header('comptabilite')}
+      <div class="row" style="gap:14px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+        <select id="kCyc" style="width:auto">${cycles.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>Cycle ${x.code}</option>`).join('')}</select>
+        <label class="row small">Quote-part par proclamateur (€) <input id="kQuote" inputmode="decimal" value="${C.quote === null || C.quote === undefined ? '' : String(C.quote).replace('.', ',')}" style="width:90px;text-align:right;padding:4px 6px"></label>
+        <span class="small muted">Résolution = quote-part × nombre de proclamateurs (total des S-21 validées du cycle)</span></div>
+      <div class="table-wrap"><table class="list"><thead><tr><th>Assemblée</th><th style="text-align:right">Proclamateurs</th><th style="text-align:right">Quote-part (€)</th><th style="text-align:right">Résolution</th><th style="text-align:right">Solde maximal (€)</th></tr></thead>
+      <tbody>${lines}</tbody>
+      <tfoot><tr style="font-weight:700"><td>Total circonscription</td><td style="text-align:right">${tN}</td><td></td><td style="text-align:right">${euro(tR)}</td><td style="text-align:right">${tS ? euro(tS) : ''}</td></tr></tfoot></table></div>
+      <p class="small muted" style="margin-top:10px">La quote-part générale s’applique à toutes les assemblées ; saisissez une quote-part dans la ligne d’une assemblée pour la remplacer. Tant qu’aucune S-21 n’est pointée pour une assemblée, le calcul utilise le nombre de proclamateurs de la liste (actifs, PP, PAP, PS et PNB).</p>`;
+    bindHeader(el);
+    const redraw = () => comptaView(el, state);
+    api.$('#kCyc', el).onchange = e => { state.cycle = e.target.value; redraw(); };
+    api.$('#kQuote', el).onchange = e => { const v = num(e.target.value); C.quote = v; api.save(); redraw(); };
+    for (const inp of api.$$('tbody input[data-k]', el)) inp.onchange = e => {
+      const a = e.target.closest('tr').dataset.asm, v = num(e.target.value), cfg = C.asm[a] ??= {};
+      if (v === null) delete cfg[e.target.dataset.k]; else cfg[e.target.dataset.k] = v;
+      api.save(); redraw();
+    };
+  }
+
+  // En-tête commun : Tableau de bord | Proclamateurs | Comptabilité
   function header(active) {
     return `<div class="page-head" style="margin-bottom:8px"><div><h1>📊 Circonscription</h1></div></div>
       <div class="tabs" style="margin-bottom:16px"><button data-view="dashboard" class="${active === 'dashboard' ? 'active' : ''}">Tableau de bord</button>
-      <button data-view="proclamateurs" class="${active === 'proclamateurs' ? 'active' : ''}">Proclamateurs</button></div>`;
+      <button data-view="proclamateurs" class="${active === 'proclamateurs' ? 'active' : ''}">Proclamateurs</button>
+      <button data-view="comptabilite" class="${active === 'comptabilite' ? 'active' : ''}">Comptabilité</button></div>`;
   }
   function bindHeader(el) {
-    api.$$('[data-view]', el).forEach(b => b.addEventListener('click', () => api.navigate(b.dataset.view === 'dashboard' ? '#/circonscription' : '#/circonscription/proclamateurs')));
+    api.$$('[data-view]', el).forEach(b => b.addEventListener('click', () => api.navigate(b.dataset.view === 'dashboard' ? '#/circonscription' : '#/circonscription/' + b.dataset.view)));
   }
 
   function mount(el, _api, rest) {
     if (rest[0] === 'assemblee' && rest[1]) return assembleeView(el, decodeURIComponent(rest.slice(1).join('/')));
+    if (rest[0] === 'comptabilite') { App.circo.cstate ??= {}; return comptaView(el, App.circo.cstate); }
     if (rest[0] === 'proclamateurs') { App.circo.pstate ??= {}; if (rest[1]) App.circo.pstate.asm = decodeURIComponent(rest[1]); return proclamateursView(el, App.circo.pstate); }
     App.circo.state ??= {group: 'Effectifs', compare: true, evo: 'procl', bar: 'procl', edit: false, cycle: null};
     App.circo.state.edit = false;
