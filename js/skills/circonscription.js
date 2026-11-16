@@ -866,7 +866,17 @@ App.circo = (() => {
       </tbody></table></div>
       <p class="small muted">Un proclamateur est nécessairement baptisé : « Non proclamateur » désigne une personne de l’annuaire qui n’est ni proclamateur ni PNB. Une ligne est surlignée en jaune pour un nouveau PNB, un baptême, un nouveau PP, un nouveau PAP ou une proposition comme ancien ou assistant : les quatre premiers cas sont repérés automatiquement (« auto »), les propositions se choisissent dans la colonne « Évolution / à signaler ». La colonne « Suivi » accepte vos notes libres pour le cycle. L’évolution est déduite du statut au cycle précédent (« auto ») ; vous pouvez aussi la choisir vous-même, par exemple « Emménagement » pour un nouveau proclamateur arrivé dans l’assemblée.<br>PNB : proclamateur non baptisé · IN : inactif · PP : pionnier permanent (objectif ${HEURES_MOIS} h/mois) · PAP : pionnier auxiliaire permanent · PS : pionnier spécial · PA : nombre de fois pionnier auxiliaire dans le cycle (sans objet pour les PP et PAP) ; le bilan compte les proclamateurs qui ont été PA, une seule fois chacun · IR : nombre de fois irrégulier.</p>`;
     bindHeader(el);
-    const redraw = () => proclamateursView(el, state);
+    // Redessiner sans perdre sa place : position de défilement (tableau et page) et champ en cours de saisie
+    const redraw = () => {
+      const w = api.$('.table-wrap.sticky', el), pos = w ? [w.scrollTop, w.scrollLeft] : null;
+      const scrollers = [document.scrollingElement, el, el.parentElement].filter(Boolean).map(x => [x, x.scrollTop]);
+      const a = document.activeElement, tr = a && a.closest ? a.closest('tr[data-id]') : null;
+      const focus = tr && a.dataset.f ? [tr.dataset.id, a.dataset.f] : null;
+      proclamateursView(el, state);
+      const w2 = api.$('.table-wrap.sticky', el); if (w2 && pos) { w2.scrollTop = pos[0]; w2.scrollLeft = pos[1]; }
+      for (const [x, t] of scrollers) x.scrollTop = t;
+      if (focus) { const f = el.querySelector(`tr[data-id="${focus[0]}"] [data-f="${focus[1]}"]`); if (f && f.offsetParent) f.focus({preventScroll: true}); }
+    };
     api.$('#pAsm', el).addEventListener('change', e => { state.asm = e.target.value; redraw(); });
     api.$('#pCyc', el).addEventListener('change', e => { state.cycle = e.target.value; redraw(); });
     api.$('#pMois', el).addEventListener('change', e => { const v = Number(e.target.value); c.mois = v >= 1 && v <= 12 ? v : undefined; api.save(); redraw(); });
