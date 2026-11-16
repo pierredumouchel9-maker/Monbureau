@@ -556,7 +556,7 @@ App.circo = (() => {
     const out = [];
     if (e.signal) out.push(e.signal);
     const a = autoSignal(ps, e.statut, ev); if (a) out.push(a);
-    if (hasAE(e.suivi)) out.push('AE');
+    if (hasAE(suiviOf(c, p, e).txt)) out.push('AE');
     if (radieDepuis(c, p) === c.code) out.push('Radié');
     return out.filter((x, i, l) => l.indexOf(x) === i);
   }
@@ -633,8 +633,19 @@ App.circo = (() => {
     }
     return S[p.id];
   }
+  // Suivi : repris du dernier cycle précédent qui en a un, tant qu'il n'est pas modifié pour ce cycle
+  // ('' enregistré = suivi effacé volontairement, il n'est plus repris).
+  function suiviOf(c, p, e) {
+    if (e && e.suivi !== undefined) return {txt: e.suivi, from: ''};
+    for (const x of sortedCycles().filter(y => y.code < c.code).reverse()) {
+      const pe = store().suivi?.[x.id]?.[p.id];
+      if (pe && pe.suivi !== undefined) return {txt: pe.suivi, from: pe.suivi ? x.code : ''};
+    }
+    return {txt: '', from: ''};
+  }
   function setEntry(c, p, k, v) {
     const S = suivi(c), e = S[p.id] ??= {...entry(c, p)}; delete e.$new;
+    if (k === 'suivi') { e.suivi = v; api.save(); return; }
     if (v === '' || v === null || (typeof v === 'number' && isNaN(v))) delete e[k]; else e[k] = v;
     if (k === 'statut' && (v === 'PP' || v === 'PAP' || v === 'PS')) delete e.pa;
     if (k === 'statut' && v !== 'PP') delete e.heures;
@@ -847,9 +858,10 @@ App.circo = (() => {
           <td style="text-align:center">${isP2 ? '' : `<input type="number" min="0" data-f="eb" value="${e.eb ?? ''}" style="width:64px;padding:4px 6px">`}</td>
           <td style="text-align:center">${isP || isP2 ? '<span class="muted small">—</span>' : `<input type="number" min="0" data-f="pa" value="${e.pa ?? ''}" style="width:64px;padding:4px 6px">`}</td>
           <td style="text-align:center">${isP2 ? '' : `<input type="number" min="0" data-f="ir" value="${e.ir ?? ''}" style="width:64px;padding:4px 6px">`}</td>
-          <td style="min-width:220px">${radie ? `<div class="small" style="font-weight:700;color:#c00;margin-bottom:3px">Radié ${radie}</div>` : ''}${e.suivi
-              ? `<div class="suivi-view small" title="Cliquer pour modifier" style="cursor:text;white-space:pre-wrap;background:#fff;color:#1f2328;border:1px solid var(--line);border-radius:6px;padding:4px 6px">${fmtSuivi(e.suivi)}</div><textarea data-f="suivi" rows="2" style="display:none;min-width:220px;padding:4px 6px;resize:vertical;font-size:13px">${api.esc(e.suivi)}</textarea>`
-              : `<textarea data-f="suivi" rows="1" style="min-width:220px;padding:4px 6px;resize:vertical;font-size:13px">${api.esc(e.suivi || '')}</textarea>`}</td></tr>`;
+          <td style="min-width:220px">${radie ? `<div class="small" style="font-weight:700;color:#c00;margin-bottom:3px">Radié ${radie}</div>` : ''}${(() => { const sv = suiviOf(c, p, e);
+              return sv.txt
+              ? `<div class="suivi-view small" title="Cliquer pour modifier" style="cursor:text;white-space:pre-wrap;background:#fff;color:#1f2328;border:1px solid var(--line);border-radius:6px;padding:4px 6px">${fmtSuivi(sv.txt)}${sv.from ? `<div class="muted" style="font-size:11px;margin-top:2px">repris de ${sv.from}</div>` : ''}</div><textarea data-f="suivi" rows="2" style="display:none;min-width:220px;padding:4px 6px;resize:vertical;font-size:13px">${api.esc(sv.txt)}</textarea>`
+              : `<textarea data-f="suivi" rows="1" style="min-width:220px;padding:4px 6px;resize:vertical;font-size:13px"></textarea>`; })()}</td></tr>`;
       }).join('') || `<tr><td colspan="11" class="muted">Aucun proclamateur ${rows.length ? 'pour ce filtre' : 'rattaché à cette assemblée dans l’annuaire'}.</td></tr>`}
       </tbody></table></div>
       <p class="small muted">Un proclamateur est nécessairement baptisé : « Non proclamateur » désigne une personne de l’annuaire qui n’est ni proclamateur ni PNB. Une ligne est surlignée en jaune pour un nouveau PNB, un baptême, un nouveau PP, un nouveau PAP ou une proposition comme ancien ou assistant : les quatre premiers cas sont repérés automatiquement (« auto »), les propositions se choisissent dans la colonne « Évolution / à signaler ». La colonne « Suivi » accepte vos notes libres pour le cycle. L’évolution est déduite du statut au cycle précédent (« auto ») ; vous pouvez aussi la choisir vous-même, par exemple « Emménagement » pour un nouveau proclamateur arrivé dans l’assemblée.<br>PNB : proclamateur non baptisé · IN : inactif · PP : pionnier permanent (objectif ${HEURES_MOIS} h/mois) · PAP : pionnier auxiliaire permanent · PS : pionnier spécial · PA : nombre de fois pionnier auxiliaire dans le cycle (sans objet pour les PP et PAP) ; le bilan compte les proclamateurs qui ont été PA, une seule fois chacun · IR : nombre de fois irrégulier.</p>`;
