@@ -404,7 +404,7 @@ App.circo = (() => {
       const doc = await PDFDocument.create(); doc.setTitle(`Bilan ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
       const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
       const W = 841.89, H = 595.28, M = 26, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
-      const ciel = rgb(.86, .93, .99), orange = rgb(1, .92, .82), red = rgb(.78, .1, .1);
+      const jaune = rgb(1, .97, .78), ciel = rgb(.86, .93, .99), orange = rgb(1, .92, .82), red = rgb(.78, .1, .1);
       const page = doc.addPage([W, H]); let y = H - M, over = false;
       const S = v => v * k;
       const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(8.5), font: o.bold ? B : R, color: o.color || ink});
@@ -430,11 +430,11 @@ App.circo = (() => {
         need(bh + gap);
         rowIt.forEach((s, j) => {
           const bx = M + j * (bw + gap);
-          page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7, color: s.bg === 'ciel' ? ciel : s.bg === 'orange' ? orange : rgb(1, 1, 1)});
+          page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7, color: s.bg === 'ciel' ? ciel : s.bg === 'orange' ? orange : s.red ? jaune : rgb(1, 1, 1)});
           let yy = y - S(10);
           s.labL.forEach((l, li) => txt(l, bx + 4, yy - li * S(8), {size: S(7), color: mute}));
           yy -= S(8) * Math.max(...rowIt.map(x => x.labL.length));   // chiffres alignés sur la même ligne
-          txt(s.v, bx + 4, yy - S(8), {bold: true, size: S(13), color: s.red ? red : ink}); yy -= S(17);
+          txt(s.v, bx + (bw - B.widthOfTextAtSize(T(s.v), S(13))) / 2, yy - S(8), {bold: true, size: S(13), color: s.red ? red : ink}); yy -= S(17);
           s.subL.forEach(l => { txt(l, bx + 4, yy, {size: S(6.5), color: mute}); yy -= S(7.5); });
         });
         y -= bh + gap;
@@ -757,7 +757,7 @@ App.circo = (() => {
     const sum = k => live.reduce((s, r) => s + (Number(r.e[k]) || 0), 0);
     const ppLow = rows.filter(r => r.e.statut === 'PP' && r.e.heures !== null && r.e.heures !== undefined && r.e.heures < objectif).length;
     const statItems = [];
-    const stat = (lab, v, sub = '', red = false) => (statItems.push({lab, v, sub, red}), '') + `<div class="card" style="padding:12px 14px"><div class="muted small" style="min-height:2.6em;line-height:1.3">${lab}</div><div class="stat" style="font-size:22px${red ? ';color:#c81a1a' : ''}">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
+    const stat = (lab, v, sub = '', red = false) => (statItems.push({lab, v, sub, red}), '') + `<div class="card" style="padding:12px 14px"><div class="muted small" style="min-height:2.6em;line-height:1.3">${lab}</div><div class="stat" style="font-size:22px;text-align:center${red ? ';color:#c81a1a' : ''}">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
     el.innerHTML = `${header('proclamateurs')}
       <div class="row" style="margin-bottom:14px">
         <select id="pAsm" style="width:auto;font-weight:600">${asms.map(a => `<option ${a === asm ? 'selected' : ''}>${api.esc(a)}</option>`).join('')}</select>
