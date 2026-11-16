@@ -346,103 +346,113 @@ App.circo = (() => {
     api.$('#pcGrp', el).onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
     for (const a of api.$$('[data-delgrp]', el)) a.onclick = e => { e.preventDefault(); f().groupes = (f().groupes || []).filter(g => g !== a.dataset.delgrp); api.save(); redraw(); };
   }
-  // Bilan imprimable d'une assemblée pour un cycle — A4 paysage
+  // Bilan imprimable d'une assemblée pour un cycle — une page A4 paysage (la taille du texte s'adapte pour tenir)
   async function bilanPdf(c, asm, statItems, rows) {
     const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
-    const doc = await PDFDocument.create(); doc.setTitle(`Bilan ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
-    const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
-    const W = 841.89, H = 595.28, M = 32, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
-    let page, y, pageNo = 0;
-    const footer = () => page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()} · page ${pageNo}`), {x: M, y: 16, size: 7.5, font: R, color: mute});
-    const newPage = () => { page = doc.addPage([W, H]); pageNo++; y = H - M; footer(); };
-    const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || 9, font: o.bold ? B : R, color: o.color || ink});
-    const fit = (t, f, size, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
-    const need = h => { if (y - h < 30) newPage(); };
-    const section = (t, after = 30) => { need(30 + after); y -= 6; txt(t, M, y - 11, {bold: true, size: 11.5, color: blue}); y -= 17; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .8, color: blue}); y -= 8; };
     const plain = h => String(h || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;|&rsquo;/g, '’').replace(/&quot;/g, '"').trim();
     const nm = p => `${(p.nom || '').toUpperCase()} ${p.prenom || ''}`.trim();
-
-    newPage();
-    const x = particul(asm), tags = [x.aum ? `Assemblée référente aumônerie en prison${x.lieu ? ' (' + x.lieu + ')' : ''}` : '', ...x.groupes].filter(Boolean).join(' · ');
-    txt(`Bilan du cycle ${c.code} — ${asm}`, M, y - 16, {bold: true, size: 18}); y -= 22;
-    if (tags) { txt(tags, M, y - 10, {size: 9, color: mute}); y -= 14; }
-    y -= 4;
-
-    // 1. Chiffres du bilan : cases sur une grille
-    section('Chiffres du bilan');
-    const cols = 7, gap = 6, bw = (W - 2 * M - gap * (cols - 1)) / cols;
-    const wrap = (t, w) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (R.widthOfTextAtSize(nx, 7.5) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
-    const items = statItems.map(s => ({...s, subs: plain(s.sub).split(/\n| · /).map(l => l.trim()).filter(Boolean).flatMap(l => wrap(l, bw - 12))}));
-    for (let i = 0; i < items.length; i += cols) {
-      const rowIt = items.slice(i, i + cols), bh = 34 + 10 * Math.max(0, ...rowIt.map(s => s.subs.length));
-      need(bh + gap);
-      rowIt.forEach((s, j) => {
-        const bx = M + j * (bw + gap);
-        page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .8});
-        txt(fit(s.lab, R, 8, bw - 10), bx + 6, y - 11, {size: 8, color: mute});
-        txt(String(s.v), bx + 6, y - 27, {bold: true, size: 15});
-        s.subs.forEach((l, k) => txt(fit(l, R, 7.5, bw - 10), bx + 6, y - 38 - k * 10, {size: 7.5, color: mute}));
-      });
-      y -= bh + gap;
-    }
-
-    // 2. Anciens, assistants, PP, PS : quatre colonnes
     const fct = p => fonctionAt(c, p) ?? p.fonction;
+    const eb = r => Number(r.e.eb) || 0, pa = r => Number(r.e.pa) || 0;
+
+    // Territoires et assistances : valeur du cycle, sinon du dernier cycle renseigné
+    const cycUp = sortedCycles().filter(x => x.code <= c.code).reverse();
+    const lastVal = k => { for (const x of cycUp) { const v = n(x.valeurs[asm]?.[k]); if (v !== null) return {v, code: x.code}; } return null; };
+    const prevOf = (k, code) => { const l = cycUp.filter(x => x.code < code); for (const x of l) { const v = n(x.valeurs[asm]?.[k]); if (v !== null) return {v, code: x.code}; } return null; };
+    const extra = [];
+    const addExtra = (lab, k, pctOf) => {
+      const cur = lastVal(k); if (!cur) return extra.push({lab, v: '—', subs: []});
+      const subs = [];
+      if (pctOf) { const t = lastVal(pctOf); if (t && t.v) subs.push(`${Math.round(cur.v / t.v * 100)} % des territoires`); }
+      if (cur.code !== c.code) subs.push(`chiffre de ${cur.code}`);
+      const pr = prevOf(k, cur.code); if (pr) subs.push(`${pr.code} : ${pr.v}`);
+      extra.push({lab, v: String(cur.v), subs});
+    };
+    addExtra('Assistance semaine', 'sem'); addExtra('Assistance week-end', 'we');
+    addExtra('Territoires', 'terr'); addExtra('Non parcourus depuis 1 an', 'nonparc', 'terr');
+
     const groups = [
-      ['Anciens', rows.filter(r => fct(r.p) === 'Ancien')],
-      ['Assistants', rows.filter(r => fct(r.p) === 'Assistant')],
-      ['Pionniers permanents (PP)', rows.filter(r => r.e.statut === 'PP')],
-      ['Pionniers spéciaux (PS)', rows.filter(r => r.e.statut === 'PS')]];
-    section('Frères nommés et pionniers', 16 + 3 * 11);
-    const cw = (W - 2 * M - 3 * 12) / 4, lh = 11;
-    const detail = (r, gi) => {
+      ['Anciens', rows.filter(r => fct(r.p) === 'Ancien'), true],
+      ['Assistants', rows.filter(r => fct(r.p) === 'Assistant'), true],
+      ['Pionniers permanents (PP)', rows.filter(r => r.e.statut === 'PP'), false],
+      ['Pionniers spéciaux (PS)', rows.filter(r => r.e.statut === 'PS'), false]];
+    const detail = (r, nomme) => {
       const bits = [];
-      if (gi >= 2 && fct(r.p) && fct(r.p) !== 'Radié') bits.push(fct(r.p));
-      if (gi < 2 && ['PP', 'PS', 'PAP'].includes(r.e.statut)) bits.push(r.e.statut);
+      if (nomme) { if (['PP', 'PS', 'PAP'].includes(r.e.statut)) bits.push(r.e.statut); else if (pa(r)) bits.push(`PA ${pa(r)}×`); }
+      else if (fct(r.p) && fct(r.p) !== 'Radié') bits.push(fct(r.p));
+      if (eb(r)) bits.push(`${eb(r)} EB`);
       if (r.p.resp?.length) bits.push(r.p.resp.join(', '));
-      if (gi === 2 && r.e.heures != null && r.e.heures !== '') bits.push(r.e.heures + ' h');
       return bits.join(' · ');
     };
-    const maxN = Math.max(1, ...groups.map(g => g[1].length));
-    need(18 + Math.min(maxN, 6) * lh);
-    groups.forEach(([t, l], gi) => txt(`${t} (${l.length})`, M + gi * (cw + 12), y - 10, {bold: true, size: 9.5}));
-    y -= 16;
-    for (let k = 0; k < maxN; k++) {
-      need(lh); 
-      groups.forEach(([, l], gi) => { const r = l[k]; if (!r) return; const cx = M + gi * (cw + 12), d = detail(r, gi);
-        const n = fit(nm(r.p), B, 8.5, cw * .55); txt(n, cx, y - 9, {size: 8.5, bold: true});
-        if (d) txt(fit(d, R, 7.5, cw - B.widthOfTextAtSize(n, 8.5) - 6), cx + B.widthOfTextAtSize(n, 8.5) + 5, y - 9, {size: 7.5, color: mute}); });
-      y -= lh;
-    }
-    if (!groups.some(g => g[1].length)) { txt('—', M, y - 9, {color: mute}); y -= lh; }
-
-    // 3. Irréguliers
     const ir = rows.filter(r => r.e.ir > 0).sort((a, b) => b.e.ir - a.e.ir || nm(a.p).localeCompare(nm(b.p), 'fr'));
-    section(`Proclamateurs irréguliers (IR) — ${ir.length}`, 2 * 11);
-    if (!ir.length) { txt('Aucun', M, y - 9, {color: mute}); y -= lh; }
-    const icol = 4, iw = (W - 2 * M) / icol, per = Math.ceil(ir.length / icol);
-    for (let k = 0; k < per; k++) {
-      need(lh);
-      for (let j = 0; j < icol; j++) { const r = ir[j * per + k]; if (!r) continue; const cx = M + j * iw;
-        txt(fit(nm(r.p), R, 8.5, iw - 60), cx, y - 9, {size: 8.5}); txt(`${r.e.ir} fois${r.e.statut === 'PNB' ? ' · PNB' : ''}`, cx + iw - 56, y - 9, {size: 8, color: mute}); }
-      y -= lh;
-    }
 
-    // 4. Territoires et assistances, par cycle
-    const cyc = sortedCycles().filter(x => x.code <= c.code), V = (x, k) => { const v = n(x.valeurs[asm]?.[k]); return v === null ? '' : String(v); };
-    const heads = [['Cycle', 'code'], ['Territoires', 'terr'], ['Non parcourus', 'nonparc'], ['Assistance semaine', 'sem'], ['Assistance week-end', 'we'], ['Visite semaine', 'vsem'], ['Visite week-end', 'vwe']];
-    section('Territoires et assistances', 16 + 13 * (cyc.length + 1));
-    const tw = (W - 2 * M) / heads.length;
-    heads.forEach(([h], j) => txt(h, M + j * tw + (j ? tw - 6 - B.widthOfTextAtSize(T(h), 8.5) : 0), y - 10, {bold: true, size: 8.5}));
-    y -= 14; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .5, color: line});
-    for (const x of cyc) {
-      need(lh + 2);
-      heads.forEach(([, k], j) => { const v = k === 'code' ? x.code : V(x, k);
-        if (k === 'nonparc' && v && V(x, 'terr')) { const pc = Math.round(Number(v) / Number(V(x, 'terr')) * 100); const t2 = `${v} (${pc} %)`; txt(t2, M + j * tw + tw - 6 - R.widthOfTextAtSize(T(t2), 9), y - 10, {bold: x.id === c.id}); }
-        else txt(v || (k === 'code' ? '' : '—'), j ? M + j * tw + tw - 6 - (x.id === c.id ? B : R).widthOfTextAtSize(T(v || '—'), 9) : M, y - 10, {bold: x.id === c.id, color: v || k === 'code' ? ink : mute}); });
-      y -= lh + 2;
+    async function build(k) {
+      const doc = await PDFDocument.create(); doc.setTitle(`Bilan ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
+      const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
+      const W = 841.89, H = 595.28, M = 26, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
+      const page = doc.addPage([W, H]); let y = H - M, over = false;
+      const S = v => v * k;
+      const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(8.5), font: o.bold ? B : R, color: o.color || ink});
+      const fit = (t, f, size, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
+      const need = h => { if (y - h < M + 10) over = true; };
+      const section = t => { y -= S(4); txt(t, M, y - S(10), {bold: true, size: S(10.5), color: blue}); y -= S(14); page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .7, color: blue}); y -= S(6); };
+      page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
+
+      const x0 = particul(asm), tags = [x0.aum ? `Assemblée référente aumônerie en prison${x0.lieu ? ' (' + x0.lieu + ')' : ''}` : '', ...x0.groupes].filter(Boolean).join(' · ');
+      txt(`Bilan du cycle ${c.code} — ${asm}`, M, y - S(15), {bold: true, size: S(16)});
+      if (tags) txt(tags, M + B.widthOfTextAtSize(T(`Bilan du cycle ${c.code} — ${asm}`), S(16)) + 14, y - S(14), {size: S(8.5), color: mute});
+      y -= S(20);
+
+      // Chiffres : cases sur 2 lignes
+      section('Chiffres du bilan');
+      const items = [...statItems.map(s => ({lab: s.lab, v: String(s.v), subs: plain(s.sub).split(/\n| · /).map(l => l.trim()).filter(Boolean)})), ...extra];
+      const cols = Math.ceil(items.length / 2), gap = 4, bw = (W - 2 * M - gap * (cols - 1)) / cols;
+      const wrap = (t, w, size) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (R.widthOfTextAtSize(nx, size) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
+      for (const it of items) { it.labL = wrap(it.lab, bw - 8, S(7)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, S(6.5))); }
+      for (let i = 0; i < items.length; i += cols) {
+        const rowIt = items.slice(i, i + cols);
+        const bh = S(4) + S(8) * Math.max(...rowIt.map(s => s.labL.length)) + S(15) + S(7.5) * Math.max(0, ...rowIt.map(s => s.subL.length)) + S(3);
+        need(bh + gap);
+        rowIt.forEach((s, j) => {
+          const bx = M + j * (bw + gap);
+          page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7});
+          let yy = y - S(10);
+          s.labL.forEach(l => { txt(l, bx + 4, yy, {size: S(7), color: mute}); yy -= S(8); });
+          txt(s.v, bx + 4, yy - S(8), {bold: true, size: S(13)}); yy -= S(17);
+          s.subL.forEach(l => { txt(l, bx + 4, yy, {size: S(6.5), color: mute}); yy -= S(7.5); });
+        });
+        y -= bh + gap;
+      }
+
+      // Frères nommés et pionniers : 4 colonnes
+      section('Frères nommés et pionniers');
+      const cw = (W - 2 * M - 3 * 10) / 4, lh = S(9.6), fs = S(7.8), fd = S(6.8);
+      groups.forEach(([t, l], gi) => txt(`${t} (${l.length})`, M + gi * (cw + 10), y - S(9), {bold: true, size: S(8.6)}));
+      y -= S(13);
+      const maxN = Math.max(1, ...groups.map(g => g[1].length));
+      need(maxN * lh);
+      for (let kk = 0; kk < maxN; kk++) {
+        groups.forEach(([, l, nomme], gi) => { const r = l[kk]; if (!r) return; const cx = M + gi * (cw + 10), d = detail(r, nomme);
+          const n1 = fit(nm(r.p), B, fs, cw * .58), w1 = B.widthOfTextAtSize(n1, fs);
+          txt(n1, cx, y - S(8), {size: fs, bold: true});
+          if (d) txt(fit(d, R, fd, cw - w1 - 5), cx + w1 + 4, y - S(8), {size: fd, color: mute}); });
+        y -= lh;
+      }
+
+      // Irréguliers : colonnes
+      section(`Proclamateurs irréguliers (IR) — ${ir.length}`);
+      if (!ir.length) { txt('Aucun', M, y - S(8), {color: mute, size: S(8)}); y -= lh; }
+      const icol = 5, iw = (W - 2 * M) / icol, per = Math.ceil(ir.length / icol);
+      need(per * lh);
+      for (let kk = 0; kk < per; kk++) {
+        for (let j = 0; j < icol; j++) { const r = ir[j * per + kk]; if (!r) continue; const cx = M + j * iw, tail = `${r.e.ir}×${r.e.statut === 'PNB' ? ' PNB' : ''}`;
+          txt(fit(nm(r.p), R, fs, iw - S(34)), cx, y - S(8), {size: fs}); txt(tail, cx + iw - S(30), y - S(8), {size: fd, color: mute}); }
+        y -= lh;
+      }
+      return {doc, over};
     }
-    return new Blob([await doc.save()], {type: 'application/pdf'});
+    let res;
+    for (const k of [1, .93, .86, .8, .74, .68, .62, .56, .5]) { res = await build(k); if (!res.over) break; }
+    return new Blob([await res.doc.save()], {type: 'application/pdf'});
   }
   function assembleeView(el, name) {
     const S = store(), cycles = sortedCycles();
@@ -710,7 +720,7 @@ App.circo = (() => {
         <span style="flex:1"></span>
         <button class="btn" id="pImp">Importer le suivi du classeur</button>
         <button class="btn" id="pAdd">+ Proclamateur</button>
-        <button class="btn" id="pPdf">Bilan PDF (A4 paysage)</button>
+        <button class="btn" id="pPdf">Bilan PDF (1 page A4 paysage)</button>
         <button class="btn primary" id="pRep">Reporter dans le tableau du cycle</button>
       </div>
       <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:14px">
