@@ -369,6 +369,10 @@ App.circo = (() => {
     };
     addExtra('Assistance semaine', 'sem'); addExtra('Assistance week-end', 'we');
     addExtra('Territoires', 'terr'); addExtra('Non parcourus depuis 1 an', 'nonparc', 'terr');
+    extra.forEach((x, i) => x.bg = i < 2 ? 'ciel' : 'orange');
+    // Âge moyen des proclamateurs (actifs, PP, PAP, PS et PNB) dont la date de naissance est connue
+    const procl = rows.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB'), ages = procl.filter(r => r.p.naissance).map(r => App.annuaire.yearsSince(r.p.naissance)).filter(a => a !== null && a !== undefined && !isNaN(a));
+    const ageBox = {lab: 'Âge moyen des proclamateurs', v: ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', subs: ages.length < procl.length ? [`sur ${ages.length} date(s) connue(s) / ${procl.length}`] : [], red: true};
 
     const groups = [
       ['Anciens', rows.filter(r => fct(r.p) === 'Ancien'), true],
@@ -391,10 +395,10 @@ App.circo = (() => {
       return bits.join(' · ');
     };
     const rowOf = q => rows.find(r => r.p.id === q.id) || {p: q, e: entry(c, q)};
-    const linesOf = (l, nomme) => l.flatMap(r => {
-      const out = [{name: nm(r.p), d: detail(r, nomme)}];
+    const linesOf = (l, nomme) => l.flatMap((r, bi) => {
+      const out = [{name: nm(r.p), d: detail(r, nomme), bi}];
       const sp = nomme ? spouseOf(r.p) : null;
-      if (sp) { const sr = rowOf(sp); out.push({name: `Épouse : ${sp.prenom || ''}`, d: activite(sr).join(' · '), sub: true}); }
+      if (sp) { const sr = rowOf(sp); out.push({name: `Épouse : ${sp.prenom || ''}`, d: activite(sr).join(' · '), sub: true, bi}); }
       return out;
     });
     const ir = rows.filter(r => r.e.ir > 0).sort((a, b) => b.e.ir - a.e.ir || nm(a.p).localeCompare(nm(b.p), 'fr'));
@@ -403,6 +407,7 @@ App.circo = (() => {
       const doc = await PDFDocument.create(); doc.setTitle(`Bilan ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
       const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
       const W = 841.89, H = 595.28, M = 26, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
+      const ciel = rgb(.86, .93, .99), orange = rgb(1, .92, .82), red = rgb(.78, .1, .1);
       const page = doc.addPage([W, H]); let y = H - M, over = false;
       const S = v => v * k;
       const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(8.5), font: o.bold ? B : R, color: o.color || ink});
@@ -418,7 +423,8 @@ App.circo = (() => {
 
       // Chiffres : cases sur 2 lignes
       section('Chiffres du bilan');
-      const items = [...statItems.map(s => ({lab: s.lab, v: String(s.v), subs: plain(s.sub).split(/\n| · /).map(l => l.trim()).filter(Boolean)})), ...extra];
+      const base = statItems.map(s => ({lab: s.lab, v: String(s.v), subs: plain(s.sub).split(/\n| · /).map(l => l.trim()).filter(Boolean), red: s.lab === 'Proclamateurs'}));
+      const items = [base[0], ageBox, ...base.slice(1), ...extra];
       const cols = Math.ceil(items.length / 2), gap = 4, bw = (W - 2 * M - gap * (cols - 1)) / cols;
       const wrap = (t, w, size) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (R.widthOfTextAtSize(nx, size) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
       for (const it of items) { it.labL = wrap(it.lab, bw - 8, S(7)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, S(6.5))); }
@@ -428,10 +434,10 @@ App.circo = (() => {
         need(bh + gap);
         rowIt.forEach((s, j) => {
           const bx = M + j * (bw + gap);
-          page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7});
+          page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7, color: s.bg === 'ciel' ? ciel : s.bg === 'orange' ? orange : rgb(1, 1, 1)});
           let yy = y - S(10);
           s.labL.forEach(l => { txt(l, bx + 4, yy, {size: S(7), color: mute}); yy -= S(8); });
-          txt(s.v, bx + 4, yy - S(8), {bold: true, size: S(13)}); yy -= S(17);
+          txt(s.v, bx + 4, yy - S(8), {bold: true, size: S(13), color: s.red ? red : ink}); yy -= S(17);
           s.subL.forEach(l => { txt(l, bx + 4, yy, {size: S(6.5), color: mute}); yy -= S(7.5); });
         });
         y -= bh + gap;
@@ -446,7 +452,9 @@ App.circo = (() => {
       const maxN = Math.max(1, ...cols4.map(l => l.length));
       need(maxN * lh);
       for (let kk = 0; kk < maxN; kk++) {
-        cols4.forEach((l, gi) => { const ln = l[kk]; if (!ln) return; const cx = M + gi * (cw + 10) + (ln.sub ? S(9) : 0), wmax = cw - (ln.sub ? S(9) : 0);
+        cols4.forEach((l, gi) => { const ln = l[kk]; if (!ln) return;
+          if (ln.bi % 2 === 0) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lh - S(1), width: cw + 4, height: lh, color: ciel});
+          const cx = M + gi * (cw + 10) + (ln.sub ? S(9) : 0), wmax = cw - (ln.sub ? S(9) : 0);
           const f1 = ln.sub ? R : B, s1 = ln.sub ? fd : fs;
           const n1 = fit(ln.name, f1, s1, wmax * .58), w1 = f1.widthOfTextAtSize(n1, s1);
           txt(n1, cx, y - S(8), {size: s1, bold: !ln.sub, color: ln.sub ? mute : ink});
