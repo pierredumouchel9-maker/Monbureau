@@ -772,7 +772,7 @@ App.circo = (() => {
     const sigsOf = r => sigList(c, r.p, r.e, prevStatut(c, r.p), evtOf(r));
     const sigOf = r => sigsOf(r)[0] || '';
     const sigHas = (r, x) => sigsOf(r).includes(x);
-    const shown = rows.filter(r => { const {p, e} = r; return (!state.filt || (state.filt === 'Ancien' || state.filt === 'Assistant' ? p.fonction === state.filt : state.filt === 'ACTIF' ? ACTIF(e.statut) : state.filt === 'EVT' ? !!(e.evt || autoEvt(prevStatut(c, p), e.statut)) : state.filt === 'SIG' ? !!sigOf(r) : e.statut === state.filt)); })
+    const shown = rows.filter(r => { const {p, e} = r; return (!state.filt || (state.filt === 'Ancien' || state.filt === 'Assistant' ? p.fonction === state.filt : state.filt === 'ACTIF' ? ACTIF(e.statut) : state.filt === 'EVT' ? !!(e.evt || autoEvt(prevStatut(c, p), e.statut)) : state.filt === 'SIG' ? !!sigOf(r) : state.filt === 'S21' ? !e.s21 && !DEPARTS.includes(e.evt) && e.statut !== 'NP' : e.statut === state.filt)); })
       .filter(({p, e}) => true
       && (!state.q || api.norm(p.nom + ' ' + p.prenom).includes(api.norm(state.q))));
     // un radié reste proclamateur (compté selon son statut) ; un déménagement ou un décès n'est plus compté
@@ -832,10 +832,10 @@ App.circo = (() => {
         <span><span style="display:inline-block;width:12px;height:12px;background:#e3e3e3;border-radius:3px;vertical-align:-2px"></span> IN</span>
         <span><span style="display:inline-block;width:5px;height:12px;background:#f59e0b;vertical-align:-2px"></span> trait orange : ancien ou assistant pionnier permanent</span></div>
       <div class="row" style="margin-bottom:10px"><input type="search" id="pQ" placeholder="Rechercher un nom" value="${api.esc(state.q || '')}" style="max-width:260px">
-        <select id="pF" style="width:auto"><option value="">Tous</option>${[['ACTIF', 'Actifs'], ['PNB', 'PNB'], ['IN', 'IN'], ['PP', 'PP'], ['PAP', 'PAP'], ['PS', 'PS'], ['NP', 'Non proclamateurs'], ['EVT', 'Avec une évolution'], ['SIG', 'Lignes surlignées'], ['Ancien', 'Anciens'], ['Assistant', 'Assistants']].map(([v, l]) => `<option value="${v}" ${state.filt === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <span class="small muted">${shown.length} affiché(s) · les saisies sont enregistrées automatiquement</span></div>
+        <select id="pF" style="width:auto"><option value="">Tous</option>${[['ACTIF', 'Actifs'], ['PNB', 'PNB'], ['IN', 'IN'], ['PP', 'PP'], ['PAP', 'PAP'], ['PS', 'PS'], ['NP', 'Non proclamateurs'], ['EVT', 'Avec une évolution'], ['SIG', 'Lignes surlignées'], ['S21', 'S-21 non pointées'], ['Ancien', 'Anciens'], ['Assistant', 'Assistants']].map(([v, l]) => `<option value="${v}" ${state.filt === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <span class="small muted">${shown.length} affiché(s) · <strong>S-21 pointées : ${live.filter(r => r.e.s21 && r.e.statut !== 'NP').length} / ${live.filter(r => r.e.statut !== 'NP').length}</strong> · les saisies sont enregistrées automatiquement</span></div>
       <details class="small muted" style="margin-bottom:8px"><summary style="cursor:pointer">Aide sur les statuts, les surlignages et le suivi</summary><p style="margin:6px 0 0">Un proclamateur est nécessairement baptisé : « Non proclamateur » désigne une personne de l’annuaire qui n’est ni proclamateur ni PNB. Une ligne est surlignée en jaune pour un nouveau PNB, un baptême, un nouveau PP, un nouveau PAP ou une proposition comme ancien ou assistant : les quatre premiers cas sont repérés automatiquement (« auto »), les propositions se choisissent dans la colonne « Évolution / à signaler ». La colonne « Suivi » accepte vos notes libres pour le cycle. L’évolution est déduite du statut au cycle précédent (« auto ») ; vous pouvez aussi la choisir vous-même, par exemple « Emménagement » pour un nouveau proclamateur arrivé dans l’assemblée.<br>PNB : proclamateur non baptisé · IN : inactif · PP : pionnier permanent (objectif ${HEURES_MOIS} h/mois) · PAP : pionnier auxiliaire permanent · PS : pionnier spécial · PA : nombre de fois pionnier auxiliaire dans le cycle (sans objet pour les PP et PAP) ; le bilan compte les proclamateurs qui ont été PA, une seule fois chacun · IR : nombre de fois irrégulier.</p></details>
-      <div class="table-wrap sticky"><table class="list" id="pTab"><thead><tr><th>Proclamateur</th><th>Fonction</th><th>Statut</th><th style="text-align:right">Âge</th><th style="text-align:right;white-space:nowrap" title="Nombre d’années depuis le baptême">Baptême</th><th>Évolution / à signaler</th><th style="width:1%;white-space:nowrap">Heures PP</th><th style="text-align:center">Études bibliques</th><th style="text-align:center">PA</th><th style="text-align:center">IR</th><th style="min-width:220px">Suivi</th></tr></thead><tbody>
+      <div class="table-wrap sticky"><table class="list" id="pTab"><thead><tr><th class="s21" title="Fiche d’activité (S-21) vérifiée pour ce cycle">S-21</th><th>Proclamateur</th><th>Fonction</th><th>Statut</th><th style="text-align:right">Âge</th><th style="text-align:right;white-space:nowrap" title="Nombre d’années depuis le baptême">Baptême</th><th>Évolution / à signaler</th><th style="width:1%;white-space:nowrap">Heures PP</th><th style="text-align:center">Études bibliques</th><th style="text-align:center">PA</th><th style="text-align:center">IR</th><th style="min-width:220px">Suivi</th></tr></thead><tbody>
       ${shown.map(({p, e}) => {
         const isP = ['PP', 'PAP', 'PS'].includes(e.statut);
         const h = e.heures, ratio = h !== null && h !== undefined ? h / objectif : null;
@@ -843,7 +843,7 @@ App.circo = (() => {
         const isP2 = e.statut === 'NP';
         const aSig = autoSignal(ps, e.statut, ev), sigs = sigList(c, p, e, ps, ev), sig = sigs[0] || '', radie = radieDepuis(c, p);
         return `<tr data-id="${p.id}" style="${DEPARTS.includes(e.evt) ? 'opacity:.55;' : ''}${rowStyle(p, e, fonctionAt(c, p) ?? p.fonction)}${sig ? ';outline:3px solid #f5c400;outline-offset:-3px' : ''}">
-          <td style="${e.statut === 'PP' && p.fonction ? 'box-shadow:inset 6px 0 0 #f59e0b;' : ''}${sig ? 'background:#ffe866;color:#1f2328' : ''}"><strong>${api.esc((p.nom || '').toUpperCase())}</strong> ${api.esc(p.prenom)}${(() => {
+          <td class="s21"><input type="checkbox" data-f="s21" title="S-21 vérifiée" ${e.s21 ? 'checked' : ''}></td><td style="${e.statut === 'PP' && p.fonction ? 'box-shadow:inset 6px 0 0 #f59e0b;' : ''}${sig ? 'background:#ffe866;color:#1f2328' : ''}"><strong>${api.esc((p.nom || '').toUpperCase())}</strong> ${api.esc(p.prenom)}${(() => {
             const why = [...sigs, ev].filter(x => x && x !== 'Sans raison').map(x => SHORT[x] || x).filter((x, i, a) => a.indexOf(x) === i);
             if (why.length) return `<div class="small" style="opacity:.85;font-weight:600">${c.code} : ${why.join(' · ')}</div>`;
             if (e.$new && ps === undefined) return '<div class="small" style="opacity:.75">pas encore de suivi</div>';
@@ -877,7 +877,7 @@ App.circo = (() => {
               return sv.txt
               ? `<div class="suivi-view small" title="Cliquer pour modifier" style="cursor:text;white-space:pre-wrap;background:#fff;color:#1f2328;border:1px solid var(--line);border-radius:6px;padding:4px 6px">${fmtSuivi(sv.txt)}${sv.from ? `<div class="muted" style="font-size:11px;margin-top:2px">repris de ${sv.from}</div>` : ''}</div><textarea data-f="suivi" rows="2" style="display:none;min-width:220px;padding:4px 6px;resize:vertical;font-size:13px">${api.esc(sv.txt)}</textarea>`
               : `<textarea data-f="suivi" rows="1" style="min-width:220px;padding:4px 6px;resize:vertical;font-size:13px"></textarea>`; })()}</td></tr>`;
-      }).join('') || `<tr><td colspan="11" class="muted">Aucun proclamateur ${rows.length ? 'pour ce filtre' : 'rattaché à cette assemblée dans l’annuaire'}.</td></tr>`}
+      }).join('') || `<tr><td colspan="12" class="muted">Aucun proclamateur ${rows.length ? 'pour ce filtre' : 'rattaché à cette assemblée dans l’annuaire'}.</td></tr>`}
       </tbody></table></div>`;
     bindHeader(el);
     // Redessiner sans perdre sa place : position de défilement (tableau et page) et champ en cours de saisie
@@ -917,6 +917,7 @@ App.circo = (() => {
         if (sortedCycles().at(-1)?.id === c.id) p.fonction = t.value;   // l'annuaire suit le dernier cycle
         api.save();
       }
+      else if (t.dataset.f === 's21') { setEntry(c, p, 's21', t.checked ? true : ''); redraw(); return; }
       else if (t.dataset.f === 'epouse') { if (t.value) p.epouse = t.value; else delete p.epouse; api.save(); redraw(); return; }
       else if (t.dataset.f === 'resp') { if (t.value) { p.resp = [...(p.resp || []), t.value]; api.save(); } redraw(); return; }
       else if (t.dataset.f === 'mix') {

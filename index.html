@@ -96,6 +96,12 @@ table.list tr.click:hover td{background:var(--accent-soft)}
 .table-wrap.sticky tbody td:first-child{position:sticky;left:0;z-index:1;background:inherit}
 .table-wrap.sticky tbody tr:not([style*="background"]) td:first-child{background:var(--panel)}
 .table-wrap.sticky thead th:first-child{left:0;z-index:4}
+/* Colonne de pointage S-21 devant le nom : les deux restent visibles */
+th.s21,td.s21{width:44px;min-width:44px;max-width:44px;text-align:center;padding-left:4px!important;padding-right:4px!important}
+td.s21 input{width:18px;height:18px;cursor:pointer;accent-color:#2f7d4f}
+.table-wrap.sticky tbody td.s21+td{position:sticky;left:44px;z-index:1;background:inherit}
+.table-wrap.sticky tbody tr:not([style*="background"]) td.s21+td{background:var(--panel)}
+.table-wrap.sticky thead th.s21+th{position:sticky;left:44px;z-index:4}
 .pill{display:inline-block;white-space:nowrap;font-size:12px;padding:2px 8px;border-radius:99px;background:var(--bg);border:1px solid var(--line);color:var(--muted)}
 .pill.ok{color:var(--ok);border-color:var(--ok)}
 .pill.warn{color:var(--warn);border-color:var(--warn)}
