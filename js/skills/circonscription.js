@@ -205,7 +205,18 @@ App.circo = (() => {
       if (r.copy && last) for (const k of ['a', 'ass', 'terr']) if (n(last.valeurs[a]?.[k]) !== null) c.valeurs[a][k] = last.valeurs[a][k];
     }
     if (last) for (const p of api.data.persons) { const e = suivi(last)[p.id]; if (e && e.fct === undefined) e.fct = p.fonction || ''; }
-    S.cycles.push(c); api.save(); api.toast(`Cycle ${c.code} créé`);
+    // Déménagements et décès notés au cycle précédent : retirés de l'annuaire, avec une trace dans le cycle
+    const partis = last ? api.data.persons.filter(p => DEPARTS.includes(suivi(last)[p.id]?.evt)) : [];
+    if (partis.length && await api.modal({title: 'Départs du cycle ' + last.code, actions: [{label: 'Les garder', value: false}, {label: 'Retirer', value: true, kind: 'danger'}], body: `<p>Ces personnes notées « Déménagement » ou « Décédé(e) » au cycle ${last.code} vont être retirées de la liste et de l'annuaire :</p><ul>${partis.map(p => `<li>${api.esc((p.nom || '').toUpperCase() + ' ' + (p.prenom || ''))} — ${api.esc(suivi(last)[p.id].evt)} (${api.esc(p.assemblee || '')})</li>`).join('')}</ul><p class="small muted">Leur trace reste dans le cycle ${last.code}.</p>`})) {
+      last.partis ??= [];
+      for (const p of partis) {
+        last.partis.push({nom: (p.nom || '').toUpperCase(), prenom: p.prenom || '', asm: p.assemblee || '', motif: suivi(last)[p.id].evt, entry: {...suivi(last)[p.id]}});
+        (last.mouvements ??= []).push({type: 'retrait', date: new Date().toISOString(), fichier: suivi(last)[p.id].evt, nom: (p.nom || '').toUpperCase(), prenom: p.prenom || '', asm: p.assemblee || ''});
+      }
+      const ids = new Set(partis.map(p => p.id));
+      api.data.persons = api.data.persons.filter(p => !ids.has(p.id));
+    }
+    S.cycles.push(c); api.save(); api.toast(`Cycle ${c.code} créé${partis.length ? ` · ${partis.length} départ(s) retiré(s)` : ''}`);
     onDone && onDone(c);
   }
 
@@ -525,9 +536,10 @@ App.circo = (() => {
   // « NP » : inscrit dans l'annuaire sans être proclamateur ni PNB (un proclamateur est nécessairement baptisé)
   const STATUTS = [{v: '', l: 'Proclamateur'}, {v: 'PNB', l: 'PNB'}, {v: 'IN', l: 'IN'}, {v: 'PP', l: 'PP'}, {v: 'PAP', l: 'PAP'}, {v: 'PS', l: 'PS'}, {v: 'NP', l: 'Non proclamateur'}];
   const ACTIF = st => st === '' || st === 'PP' || st === 'PAP' || st === 'PS' || st === undefined;   // baptisé et actif
-  const EVTS = ['Nouveau dans la liste', 'Emménagement', 'Réactivé', 'Devenu inactif', 'Baptisé', 'Nouveau PNB', 'Déménagement'];
+  const EVTS = ['Nouveau dans la liste', 'Emménagement', 'Réactivé', 'Devenu inactif', 'Baptisé', 'Nouveau PNB', 'Déménagement', 'Décédé(e)'];
+  const DEPARTS = ['Déménagement', 'Décédé(e)'];   // retirés de la liste et de l'annuaire au cycle suivant
   const SHORT = {'Devenu inactif': 'Nouvelle IN', 'Baptisé': 'Baptême'};
-  const EVT_STYLE = {'Nouveau dans la liste': 'ok', 'Emménagement': 'ok', 'Réactivé': 'ok', 'Baptisé': 'ok', 'Nouveau PNB': 'ok', 'Devenu inactif': 'warn', 'Déménagement': 'warn'};
+  const EVT_STYLE = {'Nouveau dans la liste': 'ok', 'Emménagement': 'ok', 'Réactivé': 'ok', 'Baptisé': 'ok', 'Nouveau PNB': 'ok', 'Devenu inactif': 'warn', 'Déménagement': 'warn', 'Décédé(e)': 'warn'};
   // Évolution déduite du statut au cycle précédent
   function autoEvt(prevSt, st) {
     if (prevSt === undefined) return '';
@@ -763,7 +775,8 @@ App.circo = (() => {
     const shown = rows.filter(r => { const {p, e} = r; return (!state.filt || (state.filt === 'Ancien' || state.filt === 'Assistant' ? p.fonction === state.filt : state.filt === 'ACTIF' ? ACTIF(e.statut) : state.filt === 'EVT' ? !!(e.evt || autoEvt(prevStatut(c, p), e.statut)) : state.filt === 'SIG' ? !!sigOf(r) : e.statut === state.filt)); })
       .filter(({p, e}) => true
       && (!state.q || api.norm(p.nom + ' ' + p.prenom).includes(api.norm(state.q))));
-    const live = rows;   // un radié reste proclamateur : il est compté selon son statut
+    // un radié reste proclamateur (compté selon son statut) ; un déménagement ou un décès n'est plus compté
+    const departs = rows.filter(r => DEPARTS.includes(r.e.evt)), live = rows.filter(r => !DEPARTS.includes(r.e.evt));
     const cnt = st => live.filter(r => r.e.statut === st).length;
     const sum = k => live.reduce((s, r) => s + (Number(r.e[k]) || 0), 0);
     const ppLow = rows.filter(r => r.e.statut === 'PP' && r.e.heures !== null && r.e.heures !== undefined && r.e.heures < objectif).length;
@@ -786,8 +799,8 @@ App.circo = (() => {
         ${(() => {
           const pc = prevCycle(c);
           const fNow = r => fonctionAt(c, r.p) ?? r.p.fonction ?? '', fPrev = r => pc ? fonctionAt(pc, r.p) : undefined;
-          const newF = f => rows.filter(r => fNow(r) === f && fPrev(r) !== undefined && fPrev(r) !== f).length;
-          const sigCount = x => rows.filter(r => sigHas(r, x)).length;
+          const newF = f => live.filter(r => fNow(r) === f && fPrev(r) !== undefined && fPrev(r) !== f).length;
+          const sigCount = x => live.filter(r => sigHas(r, x)).length;
           const nouv = (n, lab) => n ? `<span style="color:var(--ok);font-weight:600">dont ${n} ${lab}</span>` : '';
           const actifs = live.filter(r => ACTIF(r.e.statut)).length;
           const paPers = live.filter(r => r.e.pa > 0 && !['PP', 'PAP', 'PS'].includes(r.e.statut)).length + cnt('PAP');
@@ -795,9 +808,9 @@ App.circo = (() => {
           const ages = procl.filter(r => r.p.naissance).map(r => App.annuaire.yearsSince(r.p.naissance)).filter(a => a !== null && a !== undefined && !isNaN(a));
           return stat('Proclamateurs', actifs + cnt('PNB'), nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)'), true)
             + stat('Âge moyen des proclamateurs', ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', ages.length < procl.length ? `<span class="muted">sur ${ages.length} date(s) connue(s) / ${procl.length}</span>` : '', true)
-            + stat('Anciens', rows.filter(r => fNow(r) === 'Ancien').length, nouv(newF('Ancien'), 'nouveau(x)'))
-            + stat('Assistants', rows.filter(r => fNow(r) === 'Assistant').length, nouv(newF('Assistant'), 'nouveau(x)'))
-            + stat('PNB', cnt('PNB'), nouv(rows.filter(r => sigHas(r, 'Nouveau PNB') || evtOf(r) === 'Nouveau PNB').length, 'nouveau(x)'))
+            + stat('Anciens', live.filter(r => fNow(r) === 'Ancien').length, nouv(newF('Ancien'), 'nouveau(x)'))
+            + stat('Assistants', live.filter(r => fNow(r) === 'Assistant').length, nouv(newF('Assistant'), 'nouveau(x)'))
+            + stat('PNB', cnt('PNB'), nouv(live.filter(r => sigHas(r, 'Nouveau PNB') || evtOf(r) === 'Nouveau PNB').length, 'nouveau(x)'))
             + stat('IN', cnt('IN'), nouv(evtCount('Devenu inactif'), 'nouveau(x)'))
             + stat('PP', cnt('PP'), [nouv(sigCount('Nouveau PP'), 'nouveau(x)'), ppLow ? `<span style="color:var(--warn)">${ppLow} sous l’objectif</span>` : ''].filter(Boolean).join('<br>'))
             + stat('PS', cnt('PS'), nouv(sigCount('Nouveau PS'), 'nouveau(x)'))
@@ -806,7 +819,7 @@ App.circo = (() => {
             + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', ...campagnesPA(c, asm), sum('pa') > paPers - cnt('PAP') ? `<span class="muted">${sum('pa')} fois au total (hors PAP)</span>` : ''].filter(Boolean).join('<br>'))
             + stat('IR', live.filter(r => r.e.ir > 0).length, sum('ir') > live.filter(r => r.e.ir > 0).length ? `<span class="muted">${sum('ir')} fois au total</span>` : '');
         })()}
-        ${stat('Réactivés', evtCount('Réactivé'))}${stat('Emménagements', evtCount('Emménagement'))}${stat('Nouveaux dans la liste', evtCount('Nouveau dans la liste'))}${stat('À signaler', rows.filter(r => sigOf(r)).length, '<span style="background:#ffe866;padding:0 4px;border-radius:3px">lignes surlignées</span>')}
+        ${stat('Réactivés', evtCount('Réactivé'))}${departs.length ? stat('Départs (non comptés)', departs.length, [['Déménagement', 'déménagement(s)'], ['Décédé(e)', 'décès']].map(([k, l]) => { const n2 = departs.filter(r => r.e.evt === k).length; return n2 ? `${n2} ${l}` : ''; }).filter(Boolean).join('<br>')) : ''}${stat('Emménagements', evtCount('Emménagement'))}${stat('Nouveaux dans la liste', evtCount('Nouveau dans la liste'))}${stat('À signaler', rows.filter(r => sigOf(r)).length, '<span style="background:#ffe866;padding:0 4px;border-radius:3px">lignes surlignées</span>')}
       </div>
       ${(() => { const mv = (c.mouvements || []).filter(m => ckey(m.asm) === ckey(asm)); if (!mv.length) return '';
         const add = mv.filter(m => m.type === 'ajout'), del = mv.filter(m => m.type === 'retrait');
@@ -829,7 +842,7 @@ App.circo = (() => {
         const ps = prevStatut(c, p), auto = autoEvt(ps, e.statut), ev = e.evt || auto;
         const isP2 = e.statut === 'NP';
         const aSig = autoSignal(ps, e.statut, ev), sigs = sigList(c, p, e, ps, ev), sig = sigs[0] || '', radie = radieDepuis(c, p);
-        return `<tr data-id="${p.id}" style="${rowStyle(p, e, fonctionAt(c, p) ?? p.fonction)}${sig ? ';outline:3px solid #f5c400;outline-offset:-3px' : ''}">
+        return `<tr data-id="${p.id}" style="${DEPARTS.includes(e.evt) ? 'opacity:.55;' : ''}${rowStyle(p, e, fonctionAt(c, p) ?? p.fonction)}${sig ? ';outline:3px solid #f5c400;outline-offset:-3px' : ''}">
           <td style="${e.statut === 'PP' && p.fonction ? 'box-shadow:inset 6px 0 0 #f59e0b;' : ''}${sig ? 'background:#ffe866;color:#1f2328' : ''}"><strong>${api.esc((p.nom || '').toUpperCase())}</strong> ${api.esc(p.prenom)}${(() => {
             const why = [...sigs, ev].filter(x => x && x !== 'Sans raison').map(x => SHORT[x] || x).filter((x, i, a) => a.indexOf(x) === i);
             if (why.length) return `<div class="small" style="opacity:.85;font-weight:600">${c.code} : ${why.join(' · ')}</div>`;
@@ -851,9 +864,10 @@ App.circo = (() => {
           <td style="text-align:right;white-space:nowrap">${p.bapteme ? App.annuaire.yearsSince(p.bapteme) + ' ans' : ''}</td>
           <td><select data-f="mix" style="width:auto;max-width:210px;padding:4px 6px">
               <option value="">${[auto, aSig].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i && !(x === 'Baptême' && auto === 'Baptisé')).map(x => x + ' (auto)').join(' · ') || '—'}</option>
+              ${e.evt || e.signal ? '<option value="__annuler">↺ Annuler ma modification</option>' : ''}
               <optgroup label="Évolution">${EVTS.map(x => `<option ${!SIG_ONLY.includes(e.signal) && e.signal !== 'Aucun' && e.evt === x ? 'selected' : ''}>${x}</option>`).join('')}</optgroup>
               <optgroup label="À surligner">${SIG_ONLY.map(x => `<option value="${x}" ${e.signal === x ? 'selected' : ''}>${SIG_LABEL(x)}</option>`).join('')}<option value="Aucun" ${e.signal === 'Aucun' ? 'selected' : ''}>Ne pas surligner</option></optgroup></select>
-            <div style="margin-top:3px">${ev ? `<span class="pill ${EVT_STYLE[ev]}" style="background:#fff">${ev}</span> ` : ''}${sigs.filter(x => !(x === 'Baptême' && ev === 'Baptisé') && x !== ev).map(x => `<span class="pill" style="background:#ffe866;color:${x === 'AE' ? '#c00;font-weight:700' : '#1f2328'};border-color:#e0b800">${x === 'Sans raison' ? 'surligné' : x}</span>`).join(' ')}</div></td>
+            <div style="margin-top:3px">${ev ? `<span class="pill ${EVT_STYLE[ev]}" style="background:#fff">${ev}</span> ` : ''}${DEPARTS.includes(e.evt) ? '<div class="small" style="opacity:.8;margin-top:2px">sera retiré(e) au cycle suivant</div>' : ''}${sigs.filter(x => !(x === 'Baptême' && ev === 'Baptisé') && x !== ev).map(x => `<span class="pill" style="background:#ffe866;color:${x === 'AE' ? '#c00;font-weight:700' : '#1f2328'};border-color:#e0b800">${x === 'Sans raison' ? 'surligné' : x}</span>`).join(' ')}</div></td>
           <td style="white-space:nowrap">${e.statut === 'PP' ? `<input type="number" min="0" data-f="heures" value="${h ?? ''}" style="width:58px;padding:4px 5px">
             ${ratio !== null ? `<div class="small" style="margin-top:2px"><span class="pill ${ratio >= 1 ? 'ok' : 'warn'}" style="background:#fff;padding:0 6px" title="Moyenne : ${Math.round(h / mois)} h/mois sur ${mois} mois (objectif ${objectif} h)">${Math.round(ratio * 100)} %</span></div>` : ''}` : '<span class="muted small">—</span>'}</td>
           <td style="text-align:center">${isP2 ? '' : `<input type="number" min="0" data-f="eb" value="${e.eb ?? ''}" style="width:64px;padding:4px 6px">`}</td>
@@ -906,15 +920,19 @@ App.circo = (() => {
       else if (t.dataset.f === 'epouse') { if (t.value) p.epouse = t.value; else delete p.epouse; api.save(); redraw(); return; }
       else if (t.dataset.f === 'resp') { if (t.value) { p.resp = [...(p.resp || []), t.value]; api.save(); } redraw(); return; }
       else if (t.dataset.f === 'mix') {
-        const v = t.value;
-        if (!v) { setEntry(c, p, 'evt', ''); setEntry(c, p, 'signal', ''); }
+        const v = t.value, cur = suivi(c)[p.id];
+        // annuler : retour au repérage automatique, et au statut d'avant si un « Nouveau PP/PAP/PS » ou « Arrêt PP » l'avait changé
+        if (v === '__annuler' || !v) {
+          setEntry(c, p, 'evt', ''); setEntry(c, p, 'signal', '');
+          if (cur && cur.stAv !== undefined) { const before = cur.stAv; delete cur.stAv; setEntry(c, p, 'statut', before); }
+          redraw(); return;
+        }
         else if (EVTS.includes(v)) { setEntry(c, p, 'evt', v); setEntry(c, p, 'signal', ''); }
         else {
           setEntry(c, p, 'signal', v); setEntry(c, p, 'evt', '');
           // « Nouveau PP / PAP / PS » change aussi le statut (la case des heures apparaît pour un PP) ; « Arrêt PP » le remet à Proclamateur
-          const st = {'Nouveau PP': 'PP', 'Nouveau PAP': 'PAP', 'Nouveau PS': 'PS'}[v];
-          if (st) setEntry(c, p, 'statut', st);
-          if (v === 'Arrêt PP' && entry(c, p).statut === 'PP') setEntry(c, p, 'statut', '');
+          const st = {'Nouveau PP': 'PP', 'Nouveau PAP': 'PAP', 'Nouveau PS': 'PS'}[v] ?? (v === 'Arrêt PP' && entry(c, p).statut === 'PP' ? '' : undefined);
+          if (st !== undefined) { const e2 = suivi(c)[p.id]; if (e2.stAv === undefined) e2.stAv = e2.statut || ''; setEntry(c, p, 'statut', st); }
         }
       }
       else setEntry(c, p, t.dataset.f, ['statut', 'evt', 'signal'].includes(t.dataset.f) ? t.value : t.dataset.f === 'suivi' ? t.value.trim() : (t.value === '' ? '' : Math.max(0, Number(t.value))));
