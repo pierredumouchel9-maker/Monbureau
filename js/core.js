@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.8.8';
+  const VERSION = '0.8.9';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -335,7 +335,7 @@ const App = (() => {
     window.addEventListener('hashchange', route);
     window.addEventListener('pagehide', () => { if (key) writeNow(); });
     if ('serviceWorker' in navigator && location.protocol === 'https:') {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).catch(() => {});
     }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     try { meta = await kvGet('meta'); }
@@ -357,6 +357,9 @@ const App = (() => {
 
   // Remplacement de toute la base (utilisé par la restauration).
   async function replaceAll(records) {
+    // Oublier les données en mémoire : sinon l'enregistrement automatique (minuterie ou fermeture de page)
+    // réécrirait les anciennes données par-dessus celles qu'on vient de restaurer.
+    clearTimeout(saveTimer); await saving.catch(() => {}); key = null; data = null;
     await kv('readwrite', s => { s.clear(); for (const [k, v] of Object.entries(records)) s.put(v, k); });
   }
 

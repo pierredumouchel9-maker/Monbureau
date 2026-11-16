@@ -375,14 +375,28 @@ App.circo = (() => {
       ['Assistants', rows.filter(r => fct(r.p) === 'Assistant'), true],
       ['Pionniers permanents (PP)', rows.filter(r => r.e.statut === 'PP'), false],
       ['Pionniers spéciaux (PS)', rows.filter(r => r.e.statut === 'PS'), false]];
+    const objectif = monthsElapsed(c) * HEURES_MOIS;
+    const heures = r => { const h = r.e.heures; if (h === null || h === undefined || h === '') return ''; return `${h} h`; };
+    const activite = r => { const b = [];
+      if (['PP', 'PS', 'PAP', 'IN', 'PNB'].includes(r.e.statut)) b.push(r.e.statut); else if (pa(r)) b.push(`PA ${pa(r)}×`);
+      if (r.e.statut === 'PP' && heures(r)) b.push(heures(r));
+      if (eb(r)) b.push(`${eb(r)} EB`);
+      return b; };
     const detail = (r, nomme) => {
       const bits = [];
-      if (nomme) { if (['PP', 'PS', 'PAP'].includes(r.e.statut)) bits.push(r.e.statut); else if (pa(r)) bits.push(`PA ${pa(r)}×`); }
-      else if (fct(r.p) && fct(r.p) !== 'Radié') bits.push(fct(r.p));
-      if (eb(r)) bits.push(`${eb(r)} EB`);
       if (r.p.resp?.length) bits.push(r.p.resp.join(', '));
+      if (!nomme && fct(r.p) && fct(r.p) !== 'Radié') bits.push(fct(r.p));
+      if (nomme) bits.push(...activite(r));
+      else { if (heures(r)) bits.push(heures(r)); if (eb(r)) bits.push(`${eb(r)} EB`); }
       return bits.join(' · ');
     };
+    const rowOf = q => rows.find(r => r.p.id === q.id) || {p: q, e: entry(c, q)};
+    const linesOf = (l, nomme) => l.flatMap(r => {
+      const out = [{name: nm(r.p), d: detail(r, nomme)}];
+      const sp = nomme ? spouseOf(r.p) : null;
+      if (sp) { const sr = rowOf(sp); out.push({name: `Épouse : ${sp.prenom || ''}`, d: activite(sr).join(' · '), sub: true}); }
+      return out;
+    });
     const ir = rows.filter(r => r.e.ir > 0).sort((a, b) => b.e.ir - a.e.ir || nm(a.p).localeCompare(nm(b.p), 'fr'));
 
     async function build(k) {
@@ -428,13 +442,15 @@ App.circo = (() => {
       const cw = (W - 2 * M - 3 * 10) / 4, lh = S(9.6), fs = S(7.8), fd = S(6.8);
       groups.forEach(([t, l], gi) => txt(`${t} (${l.length})`, M + gi * (cw + 10), y - S(9), {bold: true, size: S(8.6)}));
       y -= S(13);
-      const maxN = Math.max(1, ...groups.map(g => g[1].length));
+      const cols4 = groups.map(([, l, nomme]) => linesOf(l, nomme));
+      const maxN = Math.max(1, ...cols4.map(l => l.length));
       need(maxN * lh);
       for (let kk = 0; kk < maxN; kk++) {
-        groups.forEach(([, l, nomme], gi) => { const r = l[kk]; if (!r) return; const cx = M + gi * (cw + 10), d = detail(r, nomme);
-          const n1 = fit(nm(r.p), B, fs, cw * .58), w1 = B.widthOfTextAtSize(n1, fs);
-          txt(n1, cx, y - S(8), {size: fs, bold: true});
-          if (d) txt(fit(d, R, fd, cw - w1 - 5), cx + w1 + 4, y - S(8), {size: fd, color: mute}); });
+        cols4.forEach((l, gi) => { const ln = l[kk]; if (!ln) return; const cx = M + gi * (cw + 10) + (ln.sub ? S(9) : 0), wmax = cw - (ln.sub ? S(9) : 0);
+          const f1 = ln.sub ? R : B, s1 = ln.sub ? fd : fs;
+          const n1 = fit(ln.name, f1, s1, wmax * .58), w1 = f1.widthOfTextAtSize(n1, s1);
+          txt(n1, cx, y - S(8), {size: s1, bold: !ln.sub, color: ln.sub ? mute : ink});
+          if (ln.d) txt(fit(ln.d, R, fd, wmax - w1 - 5), cx + w1 + 4, y - S(8), {size: fd, color: mute}); });
         y -= lh;
       }
 
@@ -571,6 +587,20 @@ App.circo = (() => {
   const suivi = c => (store().suivi ??= {})[c.id] ??= {};
   // Mois du cycle : A = septembre → février, B = mars → août
   function cycleStart(code) { const y = Number(code.slice(0, 4)); return /A$/.test(code) ? new Date(y - 1, 8, 1) : new Date(y, 2, 1); }
+  // Épouse d'un frère nommé : choix enregistré (p.epouse = id, ou 'aucune'), sinon déduction :
+  // même nom, même assemblée, même adresse ou même téléphone, pas un frère, écart d'âge raisonnable
+  const sameTxt = (a, b) => a && b && api.norm(a) === api.norm(b);
+  function spouseCandidates(p) {
+    return api.data.persons.filter(q => q.id !== p.id && sameTxt(q.assemblee, p.assemblee) && q.civilite !== 'Frère' && !['Ancien', 'Assistant'].includes(q.fonction) && sameTxt(q.nom, p.nom));
+  }
+  function spouseOf(p) {
+    if (p.epouse === 'aucune') return null;
+    if (p.epouse) return api.data.persons.find(q => q.id === p.epouse) || null;
+    let l = spouseCandidates(p).filter(q => sameTxt(q.adresse, p.adresse) || sameTxt((q.telephone || '').replace(/\D/g, ''), (p.telephone || '').replace(/\D/g, '')) || !q.adresse || !p.adresse);
+    const age = x => x.naissance ? App.annuaire.yearsSince(x.naissance) : null;
+    if (age(p) !== null) l = l.filter(q => age(q) === null || Math.abs(age(q) - age(p)) <= 15);
+    return l.length === 1 ? l[0] : null;
+  }
   function monthsElapsed(c) {
     if (c.mois) return c.mois;
     const st = cycleStart(c.code), now = new Date();
@@ -775,6 +805,12 @@ App.circo = (() => {
             return '';
           })()}</td>
           <td><select data-f="fonction" style="width:auto;padding:4px 6px"><option value=""></option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Ancien' ? 'selected' : ''}>Ancien</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Assistant' ? 'selected' : ''}>Assistant</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Radié' ? 'selected' : ''}>Radié</option></select>
+            ${['Ancien', 'Assistant'].includes(fonctionAt(c, p) ?? p.fonction) ? (() => { const sp = spouseOf(p), auto = !p.epouse && sp;
+              const cands = [...new Set([...spouseCandidates(p), ...people.filter(q => q.id !== p.id && q.civilite === 'Sœur')])];
+              return `<div style="margin-top:4px"><select data-f="epouse" title="Épouse" style="width:auto;max-width:190px;padding:2px 4px;font-size:12px">
+                <option value="">${auto ? 'Épouse : ' + api.esc(sp.prenom || '') + ' (auto)' : 'Épouse : —'}</option>
+                ${cands.map(q => `<option value="${q.id}" ${p.epouse === q.id ? 'selected' : ''}>Épouse : ${api.esc((q.prenom || '') + ' ' + (q.nom || '').toUpperCase())}</option>`).join('')}
+                <option value="aucune" ${p.epouse === 'aucune' ? 'selected' : ''}>Pas d’épouse</option></select></div>`; })() : ''}
             <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:3px;max-width:190px">${(p.resp || []).map(r => `<span class="pill" style="background:#fff;color:#1f2328;padding:0 6px">${api.esc(r)} <a href="#" data-delresp="${api.esc(r)}" title="Retirer" style="color:#c00;text-decoration:none">×</a></span>`).join('')}
             ${RESPS.some(r => !(p.resp || []).includes(r)) ? `<select data-f="resp" style="width:auto;padding:2px 4px;font-size:12px"><option value="">+ responsabilité</option>${RESPS.filter(r => !(p.resp || []).includes(r)).map(r => `<option>${r}</option>`).join('')}</select>` : ''}</div></td>
           <td><select data-f="statut" style="width:auto;padding:4px 6px">${STATUTS.map(s => `<option value="${s.v}" ${e.statut === s.v ? 'selected' : ''}>${s.v === 'NP' ? 'Non procl.' : s.v || 'Proclamateur'}</option>`).join('')}</select></td>
@@ -824,6 +860,7 @@ App.circo = (() => {
         if (sortedCycles().at(-1)?.id === c.id) p.fonction = t.value;   // l'annuaire suit le dernier cycle
         api.save();
       }
+      else if (t.dataset.f === 'epouse') { if (t.value) p.epouse = t.value; else delete p.epouse; api.save(); redraw(); return; }
       else if (t.dataset.f === 'resp') { if (t.value) { p.resp = [...(p.resp || []), t.value]; api.save(); } redraw(); return; }
       else if (t.dataset.f === 'mix') {
         const v = t.value;

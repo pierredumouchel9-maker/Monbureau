@@ -1,6 +1,6 @@
 /* Service worker : met l'application en cache pour qu'elle fonctionne sans connexion.
    Ne contient jamais de données personnelles (elles sont dans IndexedDB, chiffrées). */
-const CACHE = 'mon-bureau-v0.8.8';
+const CACHE = 'mon-bureau-v0.8.9';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png',
   'lib/pdf-lib.min.js', 'lib/pdfjs/pdf.min.mjs', 'lib/pdfjs/pdf.worker.min.mjs', 'js/core.js', 'js/files.js', 'js/pdf.js',
@@ -14,6 +14,6 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   // Réseau d'abord (pour recevoir les mises à jour), cache si hors ligne.
-  e.respondWith(fetch(e.request).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; })
+  e.respondWith(fetch(e.request, {cache: 'no-cache'}).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; })
     .catch(() => caches.match(e.request, {ignoreSearch: true})));
 });
