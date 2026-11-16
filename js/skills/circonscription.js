@@ -815,8 +815,12 @@ App.circo = (() => {
           const procl = live.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB');
           const ages = procl.filter(r => r.p.naissance).map(r => App.annuaire.yearsSince(r.p.naissance)).filter(a => a !== null && a !== undefined && !isNaN(a));
           const s21 = live.filter(r => r.e.s21 && (ACTIF(r.e.statut) || r.e.statut === 'PNB')).length, tot = actifs + cnt('PNB');
-          const s21txt = `<strong style="font-weight:700;color:${s21 === tot ? 'var(--ok)' : 'inherit'}">S-21 validées : ${s21}${s21 === tot ? ' ✓' : ''}</strong> <span style="color:#8a8f98">/ ${tot} proclamateurs</span>`;
-          return stat('Proclamateurs', tot, [nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)'), s21txt].filter(Boolean).join('<br>'), true)
+          // Chiffre mis en avant : les S-21 validées (seuls les proclamateurs réellement actifs ont une fiche validée) ;
+          // le total de la liste reste indiqué dessous. Tant qu'aucune fiche n'est pointée, on affiche le total de la liste.
+          const grey = t => `<span style="color:#8a8f98">${t}</span>`;
+          return (s21
+              ? stat('Proclamateurs (S-21 validées)', s21, [grey(`sur ${tot} proclamateurs dans la liste`), s21 === tot ? '<span style="color:var(--ok);font-weight:600">toutes les fiches ✓</span>' : '', nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)')].filter(Boolean).join('<br>'), true)
+              : stat('Proclamateurs', tot, [grey('S-21 pas encore pointées'), nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)')].filter(Boolean).join('<br>'), true))
             + stat('Âge moyen des proclamateurs', ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', ages.length < procl.length ? `<span class="muted">sur ${ages.length} date(s) connue(s) / ${procl.length}</span>` : '', true)
             + stat('Anciens', live.filter(r => fNow(r) === 'Ancien').length, nouv(newF('Ancien'), 'nouveau(x)'))
             + stat('Assistants', live.filter(r => fNow(r) === 'Assistant').length, nouv(newF('Assistant'), 'nouveau(x)'))
