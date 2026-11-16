@@ -608,6 +608,17 @@ App.circo = (() => {
   }
   // Heures PP : cumul depuis le début de l'année de service (1er septembre), objectif 50 h × mois écoulés.
   // Réglable par cycle (1 à 12 mois), par exemple 12 pour le total d'une année de service complète.
+  // PA du tableau du cycle : cycle A = campagne mondiale (septembre), cycle B = période du Mémorial.
+  // On affiche celui du cycle et le plus récent de l'autre type.
+  function campagnesPA(c, asm) {
+    const out = [], lab = x => /A$/.test(x.code) ? 'Campagne mondiale' : 'Mémorial';
+    const cs = sortedCycles().filter(x => x.code <= c.code).reverse();
+    for (const kind of ['Campagne mondiale', 'Mémorial']) {
+      const x = cs.find(y => lab(y) === kind && n(y.valeurs?.[asm]?.pa) !== null);
+      if (x) out.push(`${kind}${x.id === c.id ? '' : ' (' + x.code + ')'} : ${n(x.valeurs[asm].pa)}`);
+    }
+    return out;
+  }
   function monthsElapsed(c) {
     if (c.mois) return c.mois;
     const now = new Date(), sy = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
@@ -781,9 +792,7 @@ App.circo = (() => {
             + stat('PS', cnt('PS'), nouv(sigCount('Nouveau PS'), 'nouveau(x)'))
             + stat('Études bibliques', sum('eb'), (() => { const eb = st => live.filter(r => r.e.statut === st).reduce((t, r) => t + (Number(r.e.eb) || 0), 0);
               return ['PP', 'PAP', 'PS'].filter(st => eb(st) || cnt(st)).map(st => `${eb(st)} EB par ${st}`).join('<br>'); })())
-            + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', sum('pa') > paPers - cnt('PAP') ? `<span class="muted">${sum('pa')} fois au total (hors PAP)</span>` : ''].filter(Boolean).join('<br>'))
-            + (() => { const v = n(c.valeurs?.[asm]?.pa), pc = prevCycle(c), pv = pc ? n(pc.valeurs?.[asm]?.pa) : null;
-                return stat('PA campagne mondiale', v === null ? '—' : v, pv !== null ? `<span class="muted">${pc.code} : ${pv}</span>` : ''); })()
+            + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', ...campagnesPA(c, asm), sum('pa') > paPers - cnt('PAP') ? `<span class="muted">${sum('pa')} fois au total (hors PAP)</span>` : ''].filter(Boolean).join('<br>'))
             + stat('IR', live.filter(r => r.e.ir > 0).length, sum('ir') > live.filter(r => r.e.ir > 0).length ? `<span class="muted">${sum('ir')} fois au total</span>` : '');
         })()}
         ${stat('Réactivés', evtCount('Réactivé'))}${stat('Emménagements', evtCount('Emménagement'))}${stat('Nouveaux dans la liste', evtCount('Nouveau dans la liste'))}${stat('À signaler', rows.filter(r => sigOf(r)).length, '<span style="background:#ffe866;padding:0 4px;border-radius:3px">lignes surlignées</span>')}
