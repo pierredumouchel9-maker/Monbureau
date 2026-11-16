@@ -411,7 +411,7 @@ App.circo = (() => {
       return out;
     });
     // Signalements : lignes surlignées et évolutions depuis le cycle précédent, regroupées par motif
-    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'Réactivé', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
+    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'De nouveau actif', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
     const sigGroups = {};
     for (const r of allRows) {
       const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut);
@@ -442,11 +442,13 @@ App.circo = (() => {
       // Chiffres : cases sur 2 lignes
       section('Chiffres du bilan');
       const items = [...statItems.map(s => ({lab: s.lab, v: String(s.v), subs: plain(s.sub).split(/\n| · /).map(l => l.trim()).filter(Boolean), red: s.red})), ...extra];
-      const cols = Math.ceil(items.length / 2), gap = 4, bw = (W - 2 * M - gap * (cols - 1)) / cols;
+      // 1re ligne : les chiffres principaux (jusqu'à IN) ; 2e ligne : les autres
+      const mainN = statItems.findIndex(s => s.lab === 'IN') + 1 || Math.ceil(items.length / 2);
+      const rowsIt = [items.slice(0, mainN), items.slice(mainN)].filter(r => r.length);
+      const cols = Math.max(...rowsIt.map(r => r.length)), gap = 4, bw = (W - 2 * M - gap * (cols - 1)) / cols;
       const wrap = (t, w, size) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (R.widthOfTextAtSize(nx, size) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
       for (const it of items) { it.labL = wrap(it.lab, bw - 8, S(7)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, S(6.5))); }
-      for (let i = 0; i < items.length; i += cols) {
-        const rowIt = items.slice(i, i + cols);
+      for (const rowIt of rowsIt) {
         const bh = S(4) + S(8) * Math.max(...rowIt.map(s => s.labL.length)) + S(15) + S(7.5) * Math.max(0, ...rowIt.map(s => s.subL.length)) + S(3);
         need(bh + gap);
         rowIt.forEach((s, j) => {
@@ -562,14 +564,14 @@ App.circo = (() => {
   // « NP » : inscrit dans l'annuaire sans être proclamateur ni PNB (un proclamateur est nécessairement baptisé)
   const STATUTS = [{v: '', l: 'Proclamateur'}, {v: 'PNB', l: 'PNB'}, {v: 'IN', l: 'IN'}, {v: 'PP', l: 'PP'}, {v: 'PAP', l: 'PAP'}, {v: 'PS', l: 'PS'}, {v: 'NP', l: 'Non proclamateur'}];
   const ACTIF = st => st === '' || st === 'PP' || st === 'PAP' || st === 'PS' || st === undefined;   // baptisé et actif
-  const EVTS = ['Nouveau dans la liste', 'Emménagement', 'Réactivé', 'Devenu inactif', 'Baptisé', 'Nouveau PNB', 'Déménagement', 'Décédé(e)'];
+  const EVTS = ['Nouveau dans la liste', 'Emménagement', 'De nouveau actif', 'Devenu inactif', 'Baptisé', 'Nouveau PNB', 'Déménagement', 'Décédé(e)'];
   const DEPARTS = ['Déménagement', 'Décédé(e)'];   // retirés de la liste et de l'annuaire au cycle suivant
   const SHORT = {'Devenu inactif': 'Nouvelle IN', 'Baptisé': 'Baptême'};
-  const EVT_STYLE = {'Nouveau dans la liste': 'ok', 'Emménagement': 'ok', 'Réactivé': 'ok', 'Baptisé': 'ok', 'Nouveau PNB': 'ok', 'Devenu inactif': 'warn', 'Déménagement': 'warn', 'Décédé(e)': 'warn'};
+  const EVT_STYLE = {'Nouveau dans la liste': 'ok', 'Emménagement': 'ok', 'De nouveau actif': 'ok', 'Baptisé': 'ok', 'Nouveau PNB': 'ok', 'Devenu inactif': 'warn', 'Déménagement': 'warn', 'Décédé(e)': 'warn'};
   // Évolution déduite du statut au cycle précédent
   function autoEvt(prevSt, st) {
     if (prevSt === undefined) return '';
-    if (prevSt === 'IN' && ACTIF(st)) return 'Réactivé';
+    if (prevSt === 'IN' && ACTIF(st)) return 'De nouveau actif';
     if (ACTIF(prevSt) && st === 'IN') return 'Devenu inactif';
     if (prevSt === 'PNB' && ACTIF(st)) return 'Baptisé';
     if (prevSt === 'NP' && st === 'PNB') return 'Nouveau PNB';
@@ -678,6 +680,7 @@ App.circo = (() => {
       const pe = lastStored(c, p);
       return {statut: pe ? pe.statut || '' : '', heures: null, eb: null, pa: null, ir: null, $new: true};
     }
+    if (S[p.id].evt === 'Réactivé') S[p.id].evt = 'De nouveau actif';   // ancien intitulé
     return S[p.id];
   }
   // Suivi : repris du dernier cycle précédent qui en a un, tant qu'il n'est pas modifié pour ce cycle
@@ -853,16 +856,18 @@ App.circo = (() => {
             + stat('Âge moyen des proclamateurs', ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', ages.length < procl.length ? `<span class="muted">sur ${ages.length} date(s) connue(s) / ${procl.length}</span>` : '', true)
             + stat('Anciens', live.filter(r => fNow(r) === 'Ancien').length, nouv(newF('Ancien'), 'nouveau(x)'))
             + stat('Assistants', live.filter(r => fNow(r) === 'Assistant').length, nouv(newF('Assistant'), 'nouveau(x)'))
-            + stat('PNB', cnt('PNB'), nouv(live.filter(r => sigHas(r, 'Nouveau PNB') || evtOf(r) === 'Nouveau PNB').length, 'nouveau(x)'))
-            + stat('IN', cnt('IN'), nouv(evtCount('Devenu inactif'), 'nouveau(x)'))
             + stat('PP', cnt('PP'), [nouv(sigCount('Nouveau PP'), 'nouveau(x)'), ppLow ? `<span style="color:var(--warn)">${ppLow} sous l’objectif</span>` : ''].filter(Boolean).join('<br>'))
             + stat('PS', cnt('PS'), nouv(sigCount('Nouveau PS'), 'nouveau(x)'))
+            + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', ...campagnesPA(c, asm)].filter(Boolean).join('<br>'))
+            + stat('PNB', cnt('PNB'), nouv(live.filter(r => sigHas(r, 'Nouveau PNB') || evtOf(r) === 'Nouveau PNB').length, 'nouveau(x)'))
             + stat('Études bibliques', sum('eb'), (() => { const eb = st => live.filter(r => r.e.statut === st).reduce((t, r) => t + (Number(r.e.eb) || 0), 0);
               return ['PP', 'PAP', 'PS'].filter(st => eb(st) || cnt(st)).map(st => `${eb(st)} EB par ${st}`).join('<br>'); })())
-            + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', ...campagnesPA(c, asm)].filter(Boolean).join('<br>'))
-            + stat('IR', live.filter(r => r.e.ir > 0).length, sum('ir') > live.filter(r => r.e.ir > 0).length ? `<span class="muted">${sum('ir')} fois au total</span>` : '');
+            + stat('IR', live.filter(r => r.e.ir > 0).length, sum('ir') > live.filter(r => r.e.ir > 0).length ? `<span class="muted">${sum('ir')} fois au total</span>` : '')
+            + stat('IN', cnt('IN'), nouv(evtCount('Devenu inactif'), 'nouveau(x)'));
         })()}
-        ${stat('Réactivés', evtCount('Réactivé'))}${departs.length ? stat('Départs (non comptés)', departs.length, [['Déménagement', 'déménagement(s)'], ['Décédé(e)', 'décès']].map(([k, l]) => { const n2 = departs.filter(r => r.e.evt === k).length; return n2 ? `${n2} ${l}` : ''; }).filter(Boolean).join('<br>')) : ''}${stat('Emménagements', evtCount('Emménagement'))}${stat('Nouveaux dans la liste', evtCount('Nouveau dans la liste'))}${stat('À signaler', rows.filter(r => sigOf(r)).length, '<span style="background:#ffe866;padding:0 4px;border-radius:3px">lignes surlignées</span>')}
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:14px">
+        ${stat('De nouveau actifs', evtCount('De nouveau actif'))}${departs.length ? stat('Départs (non comptés)', departs.length, [['Déménagement', 'déménagement(s)'], ['Décédé(e)', 'décès']].map(([k, l]) => { const n2 = departs.filter(r => r.e.evt === k).length; return n2 ? `${n2} ${l}` : ''; }).filter(Boolean).join('<br>')) : ''}${stat('Emménagements', evtCount('Emménagement'))}${stat('Nouveaux dans la liste', evtCount('Nouveau dans la liste'))}${stat('À signaler', rows.filter(r => sigOf(r)).length, '<span style="background:#ffe866;padding:0 4px;border-radius:3px">lignes surlignées</span>')}
       </div>
       ${(() => { const mv = (c.mouvements || []).filter(m => ckey(m.asm) === ckey(asm)); if (!mv.length) return '';
         const add = mv.filter(m => m.type === 'ajout'), del = mv.filter(m => m.type === 'retrait');
@@ -998,7 +1003,7 @@ App.circo = (() => {
         ['procl', 'Proclamateurs baptisés actifs, PP compris (Procl+PP)', act.length], ['totalin', 'Inactifs (Total IN)', cnt('IN')], ['pp', 'Pionniers permanents (PP)', cnt('PP')],
         ['eb', 'Études bibliques (E.B.)', sum('eb')], ['ebpp', 'Études bibliques des PP (EB PP)', rows.filter(r => r.e.statut === 'PP').reduce((s, r) => s + (Number(r.e.eb) || 0), 0)],
         ['ir', 'Proclamateurs irréguliers (IR)', live.filter(r => r.e.ir > 0).length], ['pa', 'Pionniers auxiliaires (PA, PAP compris)', live.filter(r => r.e.pa > 0 && !['PP', 'PAP', 'PS'].includes(r.e.statut)).length + cnt('PAP')],
-        ['nvpro', 'Nouveaux proclamateurs : baptisés + emménagements (Nv.pro)', evtCount('Baptisé') + evtCount('Emménagement')], ['redact', 'Réactivés (red.act.)', evtCount('Réactivé')]];
+        ['nvpro', 'Nouveaux proclamateurs : baptisés + emménagements (Nv.pro)', evtCount('Baptisé') + evtCount('Emménagement')], ['redact', 'De nouveau actifs (red.act.)', evtCount('De nouveau actif')]];
       const sel = await api.modal({title: `Reporter ${asm} dans le cycle ${c.code}`, body: `<div class="stack"><p class="small muted" style="margin:0">Cochez les valeurs à écrire dans le tableau de bord (les autres ne changent pas).</p>
         <table class="list"><tr><th></th><th>Indicateur</th><th style="text-align:right">Actuel</th><th style="text-align:right">D’après la liste</th></tr>
         ${vals.map(([k, l, v]) => { const cur = n(c.valeurs[asm]?.[k]); return `<tr><td><input type="checkbox" data-k="${k}" ${(cur === null && !['nvpro', 'redact'].includes(k)) || (cur !== null && cur !== v && !['nvpro', 'redact'].includes(k)) ? 'checked' : ''}></td><td>${l}</td><td style="text-align:right">${fmt(cur)}</td><td style="text-align:right"><strong>${v}</strong></td></tr>`; }).join('')}</table></div>`,
