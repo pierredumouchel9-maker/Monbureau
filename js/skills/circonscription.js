@@ -821,6 +821,7 @@ App.circo = (() => {
       <div class="row" style="margin-bottom:10px"><input type="search" id="pQ" placeholder="Rechercher un nom" value="${api.esc(state.q || '')}" style="max-width:260px">
         <select id="pF" style="width:auto"><option value="">Tous</option>${[['ACTIF', 'Actifs'], ['PNB', 'PNB'], ['IN', 'IN'], ['PP', 'PP'], ['PAP', 'PAP'], ['PS', 'PS'], ['NP', 'Non proclamateurs'], ['EVT', 'Avec une évolution'], ['SIG', 'Lignes surlignées'], ['Ancien', 'Anciens'], ['Assistant', 'Assistants']].map(([v, l]) => `<option value="${v}" ${state.filt === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <span class="small muted">${shown.length} affiché(s) · les saisies sont enregistrées automatiquement</span></div>
+      <details class="small muted" style="margin-bottom:8px"><summary style="cursor:pointer">Aide sur les statuts, les surlignages et le suivi</summary><p style="margin:6px 0 0">Un proclamateur est nécessairement baptisé : « Non proclamateur » désigne une personne de l’annuaire qui n’est ni proclamateur ni PNB. Une ligne est surlignée en jaune pour un nouveau PNB, un baptême, un nouveau PP, un nouveau PAP ou une proposition comme ancien ou assistant : les quatre premiers cas sont repérés automatiquement (« auto »), les propositions se choisissent dans la colonne « Évolution / à signaler ». La colonne « Suivi » accepte vos notes libres pour le cycle. L’évolution est déduite du statut au cycle précédent (« auto ») ; vous pouvez aussi la choisir vous-même, par exemple « Emménagement » pour un nouveau proclamateur arrivé dans l’assemblée.<br>PNB : proclamateur non baptisé · IN : inactif · PP : pionnier permanent (objectif ${HEURES_MOIS} h/mois) · PAP : pionnier auxiliaire permanent · PS : pionnier spécial · PA : nombre de fois pionnier auxiliaire dans le cycle (sans objet pour les PP et PAP) ; le bilan compte les proclamateurs qui ont été PA, une seule fois chacun · IR : nombre de fois irrégulier.</p></details>
       <div class="table-wrap sticky"><table class="list" id="pTab"><thead><tr><th>Proclamateur</th><th>Fonction</th><th>Statut</th><th style="text-align:right">Âge</th><th style="text-align:right;white-space:nowrap" title="Nombre d’années depuis le baptême">Baptême</th><th>Évolution / à signaler</th><th style="width:1%;white-space:nowrap">Heures PP</th><th style="text-align:center">Études bibliques</th><th style="text-align:center">PA</th><th style="text-align:center">IR</th><th style="min-width:220px">Suivi</th></tr></thead><tbody>
       ${shown.map(({p, e}) => {
         const isP = ['PP', 'PAP', 'PS'].includes(e.statut);
@@ -863,8 +864,7 @@ App.circo = (() => {
               ? `<div class="suivi-view small" title="Cliquer pour modifier" style="cursor:text;white-space:pre-wrap;background:#fff;color:#1f2328;border:1px solid var(--line);border-radius:6px;padding:4px 6px">${fmtSuivi(sv.txt)}${sv.from ? `<div class="muted" style="font-size:11px;margin-top:2px">repris de ${sv.from}</div>` : ''}</div><textarea data-f="suivi" rows="2" style="display:none;min-width:220px;padding:4px 6px;resize:vertical;font-size:13px">${api.esc(sv.txt)}</textarea>`
               : `<textarea data-f="suivi" rows="1" style="min-width:220px;padding:4px 6px;resize:vertical;font-size:13px"></textarea>`; })()}</td></tr>`;
       }).join('') || `<tr><td colspan="11" class="muted">Aucun proclamateur ${rows.length ? 'pour ce filtre' : 'rattaché à cette assemblée dans l’annuaire'}.</td></tr>`}
-      </tbody></table></div>
-      <p class="small muted">Un proclamateur est nécessairement baptisé : « Non proclamateur » désigne une personne de l’annuaire qui n’est ni proclamateur ni PNB. Une ligne est surlignée en jaune pour un nouveau PNB, un baptême, un nouveau PP, un nouveau PAP ou une proposition comme ancien ou assistant : les quatre premiers cas sont repérés automatiquement (« auto »), les propositions se choisissent dans la colonne « Évolution / à signaler ». La colonne « Suivi » accepte vos notes libres pour le cycle. L’évolution est déduite du statut au cycle précédent (« auto ») ; vous pouvez aussi la choisir vous-même, par exemple « Emménagement » pour un nouveau proclamateur arrivé dans l’assemblée.<br>PNB : proclamateur non baptisé · IN : inactif · PP : pionnier permanent (objectif ${HEURES_MOIS} h/mois) · PAP : pionnier auxiliaire permanent · PS : pionnier spécial · PA : nombre de fois pionnier auxiliaire dans le cycle (sans objet pour les PP et PAP) ; le bilan compte les proclamateurs qui ont été PA, une seule fois chacun · IR : nombre de fois irrégulier.</p>`;
+      </tbody></table></div>`;
     bindHeader(el);
     // Redessiner sans perdre sa place : position de défilement (tableau et page) et champ en cours de saisie
     const redraw = () => {
@@ -909,7 +909,13 @@ App.circo = (() => {
         const v = t.value;
         if (!v) { setEntry(c, p, 'evt', ''); setEntry(c, p, 'signal', ''); }
         else if (EVTS.includes(v)) { setEntry(c, p, 'evt', v); setEntry(c, p, 'signal', ''); }
-        else { setEntry(c, p, 'signal', v); setEntry(c, p, 'evt', ''); }
+        else {
+          setEntry(c, p, 'signal', v); setEntry(c, p, 'evt', '');
+          // « Nouveau PP / PAP / PS » change aussi le statut (la case des heures apparaît pour un PP) ; « Arrêt PP » le remet à Proclamateur
+          const st = {'Nouveau PP': 'PP', 'Nouveau PAP': 'PAP', 'Nouveau PS': 'PS'}[v];
+          if (st) setEntry(c, p, 'statut', st);
+          if (v === 'Arrêt PP' && entry(c, p).statut === 'PP') setEntry(c, p, 'statut', '');
+        }
       }
       else setEntry(c, p, t.dataset.f, ['statut', 'evt', 'signal'].includes(t.dataset.f) ? t.value : t.dataset.f === 'suivi' ? t.value.trim() : (t.value === '' ? '' : Math.max(0, Number(t.value))));
       if (['statut', 'heures', 'fonction', 'mix', 'suivi'].includes(t.dataset.f)) redraw();
