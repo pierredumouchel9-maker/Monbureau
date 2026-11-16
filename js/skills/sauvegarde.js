@@ -15,8 +15,10 @@ App.backup = (() => {
   }
 
   // Restauration : fonctionne depuis l'écran d'accueil (premier lancement) ou depuis la page Sauvegarde.
-  async function restoreFlow() {
-    const f = await api.pickFile('.monbureau,application/json'); if (!f) return;
+  // Le sélecteur de fichier doit s'ouvrir pendant le clic lui-même : Safari (Mac, iPhone) le bloque
+  // sans rien afficher s'il est ouvert après une attente. On accepte tous les fichiers, le contenu est vérifié ensuite.
+  async function restoreFlow(picked) {
+    const f = await (picked || api.pickFile('')); if (!f) return;
     let file;
     try { file = JSON.parse(await f.text()); if (file.format !== 'mon-bureau-sauvegarde') throw 0; }
     catch { return api.toast('Ce fichier n’est pas une sauvegarde Mon Bureau.', 'error'); }
@@ -46,7 +48,10 @@ App.backup = (() => {
       <div class="notice small" style="margin-top:16px">Le mot de passe de la sauvegarde est celui en vigueur au moment où elle a été faite. Après un changement de mot de passe, refaites une sauvegarde.</div>`;
     api.$('#bExp', el).addEventListener('click', exportBackup);
     api.$('#bRes', el).addEventListener('click', async () => {
-      if (await api.confirm('Restaurer', 'Les données actuelles de cet appareil seront remplacées par celles de la sauvegarde. Continuer ?', 'Choisir le fichier', true)) restoreFlow();
+      let picked = null;
+      await api.modal({title: 'Restaurer', body: '<p>Les données actuelles de cet appareil seront remplacées par celles de la sauvegarde. Continuer ?</p>',
+        actions: [{label: 'Annuler', value: false}, {label: 'Choisir le fichier', kind: 'danger', onClick: () => { picked = api.pickFile(''); return true; }}]});
+      if (picked) restoreFlow(picked);
     });
   }
   return {mount, exportBackup, restoreFlow};

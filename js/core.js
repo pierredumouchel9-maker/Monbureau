@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.8.6';
+  const VERSION = '0.8.7';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -303,7 +303,11 @@ const App = (() => {
   function pickFile(accept) {
     return new Promise(res => {
       const i = document.createElement('input'); i.type = 'file'; i.accept = accept;
-      i.addEventListener('change', () => res(i.files[0] || null)); i.click();
+      i.style.display = 'none'; document.body.appendChild(i);
+      const done = v => { res(v); i.remove(); };
+      i.addEventListener('change', () => done(i.files[0] || null));
+      i.addEventListener('cancel', () => done(null));
+      i.click();
     });
   }
 
