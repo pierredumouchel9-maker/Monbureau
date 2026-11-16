@@ -1026,24 +1026,25 @@ App.circo = (() => {
     if (!cycles.length || !asms.length) { el.innerHTML = `${header('comptabilite')}<div class="notice">Importez d’abord le classeur d’analyse depuis le tableau de bord.</div>`; bindHeader(el); return; }
     const C = S.compta ??= {quote: null, asm: {}};
     const c = cycles.find(x => x.id === state.cycle) || cycles.at(-1); state.cycle = c.id;
-    let tN = 0, tR = 0, tS = 0;
+    let tN = 0, tR = 0, tS = 0, tV = 0;
     const lines = asms.map(a => {
       const pc = proclCount(c, a), cfg = C.asm[a] || {}, q = num(cfg.quote) ?? num(C.quote), res = q === null ? null : q * pc.n, sm = num(cfg.soldeMax);
-      tN += pc.n; if (res !== null) tR += res; if (sm !== null) tS += sm;
+      const vot = num(cfg.resolution); tN += pc.n; if (res !== null) tR += res; if (sm !== null) tS += sm; if (vot !== null) tV += vot;
       return `<tr data-asm="${api.esc(a)}"><td><strong>${api.esc(a)}</strong></td>
         <td style="text-align:right"><strong>${pc.n}</strong><div class="small muted">${pc.source === 'S-21' ? `S-21 validées · ${pc.liste} dans la liste` : 'S-21 non pointées : liste'}</div></td>
         <td style="text-align:right"><input data-k="quote" inputmode="decimal" placeholder="${num(C.quote) === null ? '' : String(num(C.quote)).replace('.', ',')}" value="${cfg.quote === undefined ? '' : String(cfg.quote).replace('.', ',')}" style="width:90px;text-align:right;padding:4px 6px"></td>
-        <td style="text-align:right;font-weight:700">${res === null ? '<span class="muted">—</span>' : euro(res)}</td>
+        <td style="text-align:right">${res === null ? '<span class="muted">—</span>' : euro(res)}</td>
+        <td style="text-align:right"><input data-k="resolution" inputmode="decimal" placeholder="${res === null ? '' : Math.round(res)}" value="${cfg.resolution === undefined ? '' : String(cfg.resolution).replace('.', ',')}" style="width:110px;text-align:right;padding:4px 6px;font-weight:700"></td>
         <td style="text-align:right"><input data-k="soldeMax" inputmode="decimal" value="${cfg.soldeMax === undefined ? '' : String(cfg.soldeMax).replace('.', ',')}" style="width:110px;text-align:right;padding:4px 6px"></td></tr>`;
     }).join('');
     el.innerHTML = `${header('comptabilite')}
       <div class="row" style="gap:14px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
         <select id="kCyc" style="width:auto">${cycles.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>Cycle ${x.code}</option>`).join('')}</select>
         <label class="row small">Quote-part par proclamateur (€) <input id="kQuote" inputmode="decimal" value="${C.quote === null || C.quote === undefined ? '' : String(C.quote).replace('.', ',')}" style="width:90px;text-align:right;padding:4px 6px"></label>
-        <span class="small muted">Résolution = quote-part × nombre de proclamateurs (total des S-21 validées du cycle)</span></div>
-      <div class="table-wrap"><table class="list"><thead><tr><th>Assemblée</th><th style="text-align:right">Proclamateurs</th><th style="text-align:right">Quote-part (€)</th><th style="text-align:right">Résolution</th><th style="text-align:right">Solde maximal (€)</th></tr></thead>
+        <span class="small muted">Montant calculé = quote-part × nombre de proclamateurs (total des S-21 validées du cycle) ; la résolution retenue, souvent arrondie, se saisit à côté</span></div>
+      <div class="table-wrap"><table class="list"><thead><tr><th>Assemblée</th><th style="text-align:right">Proclamateurs</th><th style="text-align:right">Quote-part (€)</th><th style="text-align:right">Montant calculé de la résolution</th><th style="text-align:right">Résolution pour soutenir l’œuvre mondiale (€)</th><th style="text-align:right">Solde maximal (€)</th></tr></thead>
       <tbody>${lines}</tbody>
-      <tfoot><tr style="font-weight:700"><td>Total circonscription</td><td style="text-align:right">${tN}</td><td></td><td style="text-align:right">${euro(tR)}</td><td style="text-align:right">${tS ? euro(tS) : ''}</td></tr></tfoot></table></div>
+      <tfoot><tr style="font-weight:700"><td>Total circonscription</td><td style="text-align:right">${tN}</td><td></td><td style="text-align:right">${euro(tR)}</td><td style="text-align:right">${tV ? euro(tV) : ''}</td><td style="text-align:right">${tS ? euro(tS) : ''}</td></tr></tfoot></table></div>
       <p class="small muted" style="margin-top:10px">La quote-part générale s’applique à toutes les assemblées ; saisissez une quote-part dans la ligne d’une assemblée pour la remplacer. Tant qu’aucune S-21 n’est pointée pour une assemblée, le calcul utilise le nombre de proclamateurs de la liste (actifs, PP, PAP, PS et PNB).</p>`;
     bindHeader(el);
     const redraw = () => comptaView(el, state);
