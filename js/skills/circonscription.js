@@ -622,12 +622,18 @@ App.circo = (() => {
   // Réglable par cycle (1 à 12 mois), par exemple 12 pour le total d'une année de service complète.
   // PA du tableau du cycle : cycle A = campagne mondiale (septembre), cycle B = période du Mémorial.
   // On affiche celui du cycle et le plus récent de l'autre type.
+  // PA de la campagne de septembre et du Mémorial : saisis dans l'onglet Proclamateurs (paCamp / paMem) ;
+  // à défaut, la colonne PA du tableau du cycle (cycle A = campagne, cycle B = Mémorial).
+  function paCampagne(x, asm, kind) {
+    const v = x.valeurs?.[asm] || {};
+    if (kind === 'camp') return n(v.paCamp) ?? (/A$/.test(x.code) ? n(v.pa) : null);
+    return n(v.paMem) ?? (/B$/.test(x.code) ? n(v.pa) : null);
+  }
   function campagnesPA(c, asm) {
-    const out = [], lab = x => /A$/.test(x.code) ? 'Campagne mondiale' : 'Mémorial';
-    const cs = sortedCycles().filter(x => x.code <= c.code).reverse();
-    for (const kind of ['Campagne mondiale', 'Mémorial']) {
-      const x = cs.find(y => lab(y) === kind && n(y.valeurs?.[asm]?.pa) !== null);
-      if (x) out.push(`${kind}${x.id === c.id ? '' : ' (' + x.code + ')'} : ${n(x.valeurs[asm].pa)}`);
+    const out = [], cs = sortedCycles().filter(x => x.code <= c.code).reverse();
+    for (const [kind, lab] of [['camp', 'Campagne de septembre'], ['mem', 'Mémorial']]) {
+      const x = cs.find(y => paCampagne(y, asm, kind) !== null);
+      if (x) out.push(`${lab}${x.id === c.id ? '' : ' (' + x.code + ')'} : ${paCampagne(x, asm, kind)}`);
     }
     return out;
   }
@@ -772,7 +778,7 @@ App.circo = (() => {
     const sigsOf = r => sigList(c, r.p, r.e, prevStatut(c, r.p), evtOf(r));
     const sigOf = r => sigsOf(r)[0] || '';
     const sigHas = (r, x) => sigsOf(r).includes(x);
-    const shown = rows.filter(r => { const {p, e} = r; return (!state.filt || (state.filt === 'Ancien' || state.filt === 'Assistant' ? p.fonction === state.filt : state.filt === 'ACTIF' ? ACTIF(e.statut) : state.filt === 'EVT' ? !!(e.evt || autoEvt(prevStatut(c, p), e.statut)) : state.filt === 'SIG' ? !!sigOf(r) : state.filt === 'S21' ? !e.s21 && !DEPARTS.includes(e.evt) && e.statut !== 'NP' : e.statut === state.filt)); })
+    const shown = rows.filter(r => { const {p, e} = r; return (!state.filt || (state.filt === 'Ancien' || state.filt === 'Assistant' ? p.fonction === state.filt : state.filt === 'ACTIF' ? ACTIF(e.statut) : state.filt === 'EVT' ? !!(e.evt || autoEvt(prevStatut(c, p), e.statut)) : state.filt === 'SIG' ? !!sigOf(r) : state.filt === 'S21' ? !e.s21 && !DEPARTS.includes(e.evt) && (ACTIF(e.statut) || e.statut === 'PNB') : e.statut === state.filt)); })
       .filter(({p, e}) => true
       && (!state.q || api.norm(p.nom + ' ' + p.prenom).includes(api.norm(state.q))));
     // un radié reste proclamateur (compté selon son statut) ; un déménagement ou un décès n'est plus compté
@@ -787,6 +793,8 @@ App.circo = (() => {
         <select id="pAsm" style="width:auto;font-weight:600">${asms.map(a => `<option ${a === asm ? 'selected' : ''}>${api.esc(a)}</option>`).join('')}</select>
         <select id="pCyc" style="width:auto">${cycles.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>Cycle ${x.code}</option>`).join('')}</select>
         <label class="row small" title="Mois de l’année de service (depuis le 1er septembre) couverts par les heures PP saisies ; 12 pour une année complète">Mois depuis septembre <input type="number" id="pMois" min="1" max="12" value="${mois}" style="width:64px;padding:4px 6px"></label>
+        <label class="row small" title="Nombre de pionniers auxiliaires pendant la campagne de septembre">PA campagne sept. <input type="number" min="0" id="pPaCamp" value="${paCampagne(c, asm, 'camp') ?? ''}" style="width:64px;padding:4px 6px"></label>
+        <label class="row small" title="Nombre de pionniers auxiliaires à l’occasion du Mémorial (mars-avril)">PA Mémorial <input type="number" min="0" id="pPaMem" value="${paCampagne(c, asm, 'mem') ?? ''}" style="width:64px;padding:4px 6px"></label>
         ${badges(asm) ? `<span>${badges(asm)}</span>` : ''}
         <span class="small muted">Objectif PP : ${objectif} h (${HEURES_MOIS} h × ${mois} mois)</span>
         <span style="flex:1"></span>
@@ -806,7 +814,9 @@ App.circo = (() => {
           const paPers = live.filter(r => r.e.pa > 0 && !['PP', 'PAP', 'PS'].includes(r.e.statut)).length + cnt('PAP');
           const procl = live.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB');
           const ages = procl.filter(r => r.p.naissance).map(r => App.annuaire.yearsSince(r.p.naissance)).filter(a => a !== null && a !== undefined && !isNaN(a));
-          return stat('Proclamateurs', actifs + cnt('PNB'), nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)'), true)
+          const s21 = live.filter(r => r.e.s21 && (ACTIF(r.e.statut) || r.e.statut === 'PNB')).length, tot = actifs + cnt('PNB');
+          const s21txt = s21 === tot ? `<span style="color:var(--ok);font-weight:600">S-21 validées : ${s21} ✓</span>` : `<span style="color:var(--warn);font-weight:600">S-21 validées : ${s21} / ${tot}</span>`;
+          return stat('Proclamateurs', tot, [nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)'), s21txt].filter(Boolean).join('<br>'), true)
             + stat('Âge moyen des proclamateurs', ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', ages.length < procl.length ? `<span class="muted">sur ${ages.length} date(s) connue(s) / ${procl.length}</span>` : '', true)
             + stat('Anciens', live.filter(r => fNow(r) === 'Ancien').length, nouv(newF('Ancien'), 'nouveau(x)'))
             + stat('Assistants', live.filter(r => fNow(r) === 'Assistant').length, nouv(newF('Assistant'), 'nouveau(x)'))
@@ -833,7 +843,7 @@ App.circo = (() => {
         <span><span style="display:inline-block;width:5px;height:12px;background:#f59e0b;vertical-align:-2px"></span> trait orange : ancien ou assistant pionnier permanent</span></div>
       <div class="row" style="margin-bottom:10px"><input type="search" id="pQ" placeholder="Rechercher un nom" value="${api.esc(state.q || '')}" style="max-width:260px">
         <select id="pF" style="width:auto"><option value="">Tous</option>${[['ACTIF', 'Actifs'], ['PNB', 'PNB'], ['IN', 'IN'], ['PP', 'PP'], ['PAP', 'PAP'], ['PS', 'PS'], ['NP', 'Non proclamateurs'], ['EVT', 'Avec une évolution'], ['SIG', 'Lignes surlignées'], ['S21', 'S-21 non pointées'], ['Ancien', 'Anciens'], ['Assistant', 'Assistants']].map(([v, l]) => `<option value="${v}" ${state.filt === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <span class="small muted">${shown.length} affiché(s) · <strong>S-21 pointées : ${live.filter(r => r.e.s21 && r.e.statut !== 'NP').length} / ${live.filter(r => r.e.statut !== 'NP').length}</strong> · les saisies sont enregistrées automatiquement</span></div>
+        <span class="small muted">${shown.length} affiché(s) · <strong>S-21 validées : ${live.filter(r => r.e.s21 && (ACTIF(r.e.statut) || r.e.statut === 'PNB')).length} / ${live.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB').length} proclamateurs</strong> · les saisies sont enregistrées automatiquement</span></div>
       <details class="small muted" style="margin-bottom:8px"><summary style="cursor:pointer">Aide sur les statuts, les surlignages et le suivi</summary><p style="margin:6px 0 0">Un proclamateur est nécessairement baptisé : « Non proclamateur » désigne une personne de l’annuaire qui n’est ni proclamateur ni PNB. Une ligne est surlignée en jaune pour un nouveau PNB, un baptême, un nouveau PP, un nouveau PAP ou une proposition comme ancien ou assistant : les quatre premiers cas sont repérés automatiquement (« auto »), les propositions se choisissent dans la colonne « Évolution / à signaler ». La colonne « Suivi » accepte vos notes libres pour le cycle. L’évolution est déduite du statut au cycle précédent (« auto ») ; vous pouvez aussi la choisir vous-même, par exemple « Emménagement » pour un nouveau proclamateur arrivé dans l’assemblée.<br>PNB : proclamateur non baptisé · IN : inactif · PP : pionnier permanent (objectif ${HEURES_MOIS} h/mois) · PAP : pionnier auxiliaire permanent · PS : pionnier spécial · PA : nombre de fois pionnier auxiliaire dans le cycle (sans objet pour les PP et PAP) ; le bilan compte les proclamateurs qui ont été PA, une seule fois chacun · IR : nombre de fois irrégulier.</p></details>
       <div class="table-wrap sticky"><table class="list" id="pTab"><thead><tr><th class="s21" title="Fiche d’activité (S-21) vérifiée pour ce cycle">S-21</th><th>Proclamateur · fonction</th><th>Statut</th><th style="text-align:right">Âge</th><th style="text-align:right;white-space:nowrap" title="Nombre d’années depuis le baptême">Baptême</th><th>Évolution / à signaler</th><th style="width:1%;white-space:nowrap">Heures PP</th><th style="text-align:center">Études bibliques</th><th style="text-align:center">PA</th><th style="text-align:center">IR</th><th style="min-width:220px">Suivi</th></tr></thead><tbody>
       ${shown.map(({p, e}) => {
@@ -893,6 +903,11 @@ App.circo = (() => {
     };
     api.$('#pAsm', el).addEventListener('change', e => { state.asm = e.target.value; redraw(); });
     api.$('#pCyc', el).addEventListener('change', e => { state.cycle = e.target.value; redraw(); });
+    for (const [id, k] of [['#pPaCamp', 'paCamp'], ['#pPaMem', 'paMem']]) api.$(id, el).addEventListener('change', e => {
+      const v = e.target.value.trim(), vals = c.valeurs[asm] ??= {};
+      if (v === '') delete vals[k]; else vals[k] = Math.max(0, Number(v));
+      api.save(); redraw();
+    });
     api.$('#pMois', el).addEventListener('change', e => { const v = Number(e.target.value); c.mois = v >= 1 && v <= 12 ? v : undefined; api.save(); redraw(); });
     api.$('#pQ', el).addEventListener('input', e => { state.q = e.target.value; clearTimeout(state.t); state.t = setTimeout(() => { redraw(); const i = api.$('#pQ', el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); });
     api.$('#pF', el).addEventListener('change', e => { state.filt = e.target.value; redraw(); });
