@@ -125,6 +125,31 @@ App.annuaire = (() => {
     ['nom', /^nom$|nom de famille/], ['civilite', /^(f s|f|civilite|frere soeur|titre)$/], ['telephone', /\btel\b|telephone|portable|mobile|gsm/],
     ['fonction', /^(fonction|fct|a ass|attribution|role|privilege)$/], ['assemblee', /assemblee|congregation/], ['naissance', /date de naiss|naissance|ne le/], ['bapteme', /jour bapt|date de bapt|date bapt|bapteme le/], ['bapteme', /bapteme|bapt/], ['cp', /^cp$|code postal/], ['ville', /^ville$|commune|localite/], ['adresse', /adresse/]
   ];
+  // Fiches présentées à la verticale (« Nom : DUPONT » ou « Nom » | « DUPONT » sur deux colonnes, une fiche après l'autre) :
+  // on les transforme en tableau classique, une ligne par personne.
+  const LABELS = [['nom', /^nom( de famille)?$/], ['prenom', /^prenoms?$/], ['nom_complet', /^(nom et prenom|nom prenom|prenom nom|nom complet|proclamateur)$/], ['adresse', /^adresse$/], ['cp', /^(cp|code postal|cp ville|cp et ville|code postal ville|code postal et ville)$/], ['ville', /^(ville|commune)$/], ['telephone', /^(tel|telephone|portable|mobile|gsm|tel portable)$/], ['email', /^(mail|e mail|email|courriel)$/], ['naissance', /^(date de naissance|naissance|ne le|nee le)$/], ['bapteme', /^(date de bapteme|bapteme|baptise le|baptisee le)$/], ['fonction', /^(fonction|privilege)$/], ['assemblee', /^(assemblee|congregation)$/]];
+  const HEAD_OF = {nom: 'Nom', prenom: 'Prénom', nom_complet: 'Nom et prénom', adresse: 'Adresse', cp: 'Code postal', ville: 'Ville', telephone: 'Portable', email: 'Mail', naissance: 'Date de naissance', bapteme: 'Date de baptême', fonction: 'Fonction', assemblee: 'Assemblée'};
+  function verticalToTable(sheet) {
+    const cells = [];
+    for (const r of sheet.rows) {
+      const c = r.map(x => x ?? '').filter(x => String(x).trim() !== '');
+      if (!c.length) { cells.push(null); continue; }
+      let lab = String(c[0]).trim(), val = c[1];
+      const m = /^([^:]{2,30}?)\s*:\s*(.*)$/.exec(lab); if (m && c.length === 1) { lab = m[1]; val = m[2]; } else lab = lab.replace(/\s*:$/, '');
+      const key = (LABELS.find(([, re]) => re.test(api.norm(lab))) || [])[0];
+      cells.push(key ? {key, val: val ?? ''} : {other: true});
+    }
+    const labelled = cells.filter(x => x && x.key).length, filled = cells.filter(Boolean).length;
+    if (labelled < 6 || labelled / filled < 0.5) return sheet;   // pas une présentation en fiches
+    const keys = [], recs = []; let cur = null;
+    const first = cells.find(x => x && x.key)?.key;
+    for (const x of cells) {
+      if (!x || !x.key) continue;
+      if (!cur || x.key === first || x.key in cur) { cur = {}; recs.push(cur); }
+      cur[x.key] = x.val; if (!keys.includes(x.key)) keys.push(x.key);
+    }
+    return {name: sheet.name + ' (fiches)', rows: [keys.map(k => HEAD_OF[k]), ...recs.map(r => keys.map(k => r[k] ?? ''))]};
+  }
   const TARGETS = [{key: 'nom_complet', label: 'Prénom et nom dans une seule colonne'}, ...FIELDS.filter(f => f.key !== 'notes')];
 
   async function importFlow(onDone, mode = 'import') {
@@ -132,7 +157,7 @@ App.annuaire = (() => {
     const file = await api.pickFile('.xlsx,.xlsm,.csv,.pdf'); if (!file) return;
     let sheets;
     try { sheets = await App.files.readTable(file); } catch (e) { return api.toast('Lecture impossible : ' + e.message, 'error'); }
-    sheets = sheets.filter(s => s.rows.some(r => r.some(c => String(c).trim())));
+    sheets = sheets.filter(s => s.rows.some(r => r.some(c => String(c).trim()))).map(verticalToTable);
     if (!sheets.length) return api.toast('Le fichier ne contient aucune donnée.', 'error');
     // Ligne des titres = celle des 20 premières qui contient le plus de titres reconnus (pas d'@ ni de longs textes).
     const isTitle = c => { const t = String(c ?? '').trim(); return t && t.length < 40 && !/@|\d{4,}/.test(t) && GUESS.some(([, re]) => re.test(api.norm(t))); };
@@ -171,6 +196,15 @@ App.annuaire = (() => {
           const pick = (k, test, min = 0.6) => { if (k in guess) return; const c = cols.filter(c => !used.has(c.i)).map(c => [c.i, share(c.i, test)]).filter(x => x[1] >= min).sort((a, b) => b[1] - a[1])[0]; if (c) { guess[k] = c[0]; used.add(c[0]); } };
           pick('email', v => /^[^\s@]+@[^\s@]+$/.test(v));
           pick('telephone', v => /^(\+33\s?|0)[1-9]([ .-]?\d{2}){4}$/.test(v));
+          // Dates sans titre reconnu : la plus ancienne est la naissance, l'autre le baptême
+          if (!('naissance' in guess) || !('bapteme' in guess)) {
+            const dc = cols.filter(c => !used.has(c.i) && share(c.i, v => !!parseDate(isNaN(v) ? v : Number(v))) >= 0.6)
+              .map(c => { const ys = vals(c.i).map(v => parseDate(isNaN(v) ? v : Number(v))).filter(Boolean).map(d => +d.slice(0, 4)).sort((a, b) => a - b); return {i: c.i, med: ys[Math.floor(ys.length / 2)]}; })
+              .filter(c => c.med > 1900).sort((a, b) => a.med - b.med);
+            if (dc.length >= 2) { if (!('naissance' in guess)) { guess.naissance = dc[0].i; used.add(dc[0].i); } if (!('bapteme' in guess)) { guess.bapteme = dc[1].i; used.add(dc[1].i); } }
+            else if (dc.length === 1 && ('bapteme' in guess) && !('naissance' in guess)) { guess.naissance = dc[0].i; used.add(dc[0].i); }
+            else if (dc.length === 1 && ('naissance' in guess) && !('bapteme' in guess)) { guess.bapteme = dc[0].i; used.add(dc[0].i); }
+          }
           if (h < 0) {
           pick('cp', v => /^\d{5}$/.test(v));
           pick('civilite', v => /^(frere|soeur|f|s|fr|sr)\.?$/.test(api.norm(v)));
@@ -198,13 +232,25 @@ App.annuaire = (() => {
             // Une seule colonne « Nom » contenant « Prénom NOM » : on sépare automatiquement.
             else if (map.prenom === undefined && /\s/.test(nom) && /[a-zà-ÿ]/.test(nom)) ({prenom, nom} = splitName(nom));
             if (!prenom && !nom) continue;
+            // Vous-même (profil dans Paramètres), souvent en tête des listes comme responsable de circonscription
+            const me = api.data.settings?.profil || {};
+            nom = nom.replace(/^RC\s+|\s+RC$/, ''); prenom = prenom.replace(/^RC\s+|\s+RC$/, '');
+            if (me.nom && me.prenom && api.norm(nom) === api.norm(me.nom) && api.norm(prenom) === api.norm(me.prenom)) continue;
+            // Titres et lignes de texte (« Assemblée de … – liste 2026 », « Total », « Page 2 ») : pas une personne
+            if (/\b(liste|assemblee|congregation|page|total|groupe|mise a jour)\b/.test(api.norm(prenom + ' ' + nom)) || (prenom + ' ' + nom).length > 45) continue;
             // Lignes de totaux ou de titres (« Total », « Assistance »…) : un seul mot et aucune autre information.
             if ((!prenom || !nom) && !['telephone', 'email', 'adresse', 'naissance', 'bapteme'].some(k => map[k] !== undefined && String(r[map[k]] ?? '').trim())) continue;
             const raw = k => map[k] === undefined ? '' : r[map[k]];
+            // Adresse complète dans une seule cellule (« 2 rue … 14123 Ifs », parfois sur plusieurs lignes), ou « CP Ville » ensemble
+            let adr = get('adresse').replace(/\s*\n\s*/g, ' '), cpv = get('cp'), vil = get('ville');
+            const mA = !cpv && /^(.*?)[,\s]*\b(\d{2}) ?(\d{3})\b\s*(.*)$/.exec(adr);
+            if (mA && /[a-zà-ÿ]/i.test(mA[1])) { adr = mA[1].replace(/[,\s-]+$/, ''); cpv = mA[2] + mA[3]; if (!vil) vil = mA[4].replace(/\bcedex\b.*$/i, '').trim(); }
+            const mC = /^(\d{2}) ?(\d{3})\s+(.+)$/.exec(cpv); if (mC) { cpv = mC[1] + mC[2]; if (!vil) vil = mC[3].trim(); }
+            const mV = !cpv && /^(\d{2}) ?(\d{3})\s+(.+)$/.exec(vil); if (mV) { cpv = mV[1] + mV[2]; vil = mV[3].trim(); }
             // Assemblée laissée vide sous une cellule fusionnée : on reprend celle du dessus.
             let cong = get('assemblee'); if (map.assemblee !== undefined) { if (cong) lastCong = cong; else cong = lastCong; }
             people.push({civilite: civ(get('civilite')), prenom, nom: nom.toUpperCase(), naissance: parseDate(raw('naissance')), bapteme: parseDate(raw('bapteme')), fonction: fct(get('fonction')), assemblee: cong || api.$('#impCong', b).value.trim().toUpperCase(), telephone: get('telephone'),
-              email: get('email').replace(/,/g, '.').replace(/\s+/g, ''), adresse: get('adresse'), cp: get('cp'), ville: get('ville')});
+              email: get('email').replace(/,/g, '.').replace(/\s+/g, ''), adresse: adr, cp: cpv, ville: vil ? vil.toUpperCase() : ''});
           }
           // Dédoublonnage dans le fichier lui-même puis contre l'annuaire.
           const unique = [];
@@ -214,6 +260,7 @@ App.annuaire = (() => {
           const badMail = unique.filter(p => !emailOk(p.email)).length;
           const mapped = new Set(Object.keys(map)); if (map.nom_complet !== undefined) mapped.add('prenom').add('nom');
           if (api.$('#impCong', b).value.trim()) mapped.add('assemblee');
+          for (const k of ['cp', 'ville']) if (unique.some(p => p[k])) mapped.add(k);
           b._plan = unique.length ? {toAdd, toMerge, existing, unique, mapped} : null;
           api.$('#impPrev', b).innerHTML = `<div class="notice small">${unique.length} personne(s) lue(s) : <strong>${toAdd.length} nouvelle(s)</strong>, ${toMerge.length} déjà présente(s)${compare ? '' : ' (les champs vides seront complétés)'}${people.length > unique.length ? `, ${people.length - unique.length} doublon(s) dans le fichier fusionné(s)` : ''}${badMail ? `, <span style="color:var(--warn)">${badMail} mail(s) à vérifier</span>` : ''}.</div>
             <div class="table-wrap" style="margin-top:10px;max-height:220px"><table class="list"><tr><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr>
