@@ -358,7 +358,7 @@ App.circo = (() => {
     for (const a of api.$$('[data-delgrp]', el)) a.onclick = e => { e.preventDefault(); f().groupes = (f().groupes || []).filter(g => g !== a.dataset.delgrp); api.save(); redraw(); };
   }
   // Bilan imprimable d'une assemblée pour un cycle — une page A4 paysage (la taille du texte s'adapte pour tenir)
-  async function bilanPdf(c, asm, statItems, rows) {
+  async function bilanPdf(c, asm, statItems, rows, allRows = rows) {
     const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
     const plain = h => String(h || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;|&rsquo;/g, '’').replace(/&quot;/g, '"').trim();
     const nm = p => `${(p.nom || '').toUpperCase()} ${p.prenom || ''}`.trim();
@@ -409,6 +409,15 @@ App.circo = (() => {
       if (sp) { const sr = rowOf(sp); out.push({name: `Épouse : ${sp.prenom || ''}`, d: activite(sr).join(' · '), sub: true, bi}); }
       return out;
     });
+    // Signalements : lignes surlignées et évolutions depuis le cycle précédent, regroupées par motif
+    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'Réactivé', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
+    const sigGroups = {};
+    for (const r of allRows) {
+      const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut);
+      const motifs = [...sigList(c, r.p, r.e, ps, ev), ev].filter(Boolean).map(x => x === 'Sans raison' ? 'Surligné' : (SHORT[x] || x));
+      for (const m of new Set(motifs)) (sigGroups[m] ??= []).push(nm(r.p));
+    }
+    const sigOrder = Object.keys(sigGroups).sort((a, b) => ((ORDRE.indexOf(a) + 1) || 99) - ((ORDRE.indexOf(b) + 1) || 99));
     const ir = rows.filter(r => r.e.ir > 0).sort((a, b) => b.e.ir - a.e.ir || nm(a.p).localeCompare(nm(b.p), 'fr'));
 
     async function build(k) {
@@ -479,6 +488,20 @@ App.circo = (() => {
         for (let j = 0; j < icol; j++) { const r = ir[j * per + kk]; if (!r) continue; const cx = M + j * iw, tail = `${r.e.ir}×${r.e.statut === 'PNB' ? ' PNB' : ''}`;
           txt(fit(nm(r.p), R, fs, iw - S(34)), cx, y - S(8), {size: fs}); txt(tail, cx + iw - S(30), y - S(8), {size: fd, color: mute}); }
         y -= lh;
+      }
+      // Signalements
+      if (sigOrder.length) {
+        section(`Signalements — ${new Set(Object.values(sigGroups).flat()).size} proclamateur(s)`);
+        const wmax = W - 2 * M;
+        for (const m of sigOrder) {
+          const lab = `${m} (${sigGroups[m].length}) : `, lw = B.widthOfTextAtSize(T(lab), fs);
+          const words = sigGroups[m].join(', ').split(' '), out = []; let cur = '';
+          for (const w of words) { const nx = cur ? cur + ' ' + w : w; if (R.widthOfTextAtSize(T(nx), fs) > wmax - lw && cur) { out.push(cur); cur = w; } else cur = nx; }
+          if (cur) out.push(cur);
+          need(out.length * lh);
+          txt(lab, M, y - S(8), {bold: true, size: fs, color: m === 'AE' || m === 'Radié' ? rgb(.78, .1, .1) : ink});
+          out.forEach((l, i) => { txt(l, M + lw, y - S(8), {size: fs}); y -= lh; });
+        }
       }
       return {doc, over};
     }
@@ -959,7 +982,7 @@ App.circo = (() => {
       if (['statut', 'heures', 'fonction', 'mix', 'suivi'].includes(t.dataset.f)) redraw();
     });
     api.$('#pPdf', el).addEventListener('click', async () => {
-      try { api.download(App.pdf.fileName(`Bilan ${asm} ${c.code}`) + '.pdf', await bilanPdf(c, asm, statItems, live), 'application/pdf'); }
+      try { api.download(App.pdf.fileName(`Bilan ${asm} ${c.code}`) + '.pdf', await bilanPdf(c, asm, statItems, live, rows), 'application/pdf'); }
       catch (err) { console.error(err); api.toast('Erreur lors de la création du PDF : ' + err.message); }
     });
     api.$('#pRep', el).addEventListener('click', async () => {
