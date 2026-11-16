@@ -815,7 +815,7 @@ App.circo = (() => {
           const procl = live.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB');
           const ages = procl.filter(r => r.p.naissance).map(r => App.annuaire.yearsSince(r.p.naissance)).filter(a => a !== null && a !== undefined && !isNaN(a));
           const s21 = live.filter(r => r.e.s21 && (ACTIF(r.e.statut) || r.e.statut === 'PNB')).length, tot = actifs + cnt('PNB');
-          const s21txt = s21 === tot ? `<span style="color:var(--ok);font-weight:600">S-21 validées : ${s21} ✓</span>` : `<span style="color:var(--warn);font-weight:600">S-21 validées : ${s21} / ${tot}</span>`;
+          const s21txt = `<strong style="font-weight:700;color:${s21 === tot ? 'var(--ok)' : 'inherit'}">S-21 validées : ${s21}${s21 === tot ? ' ✓' : ''}</strong> <span style="color:#8a8f98">/ ${tot} proclamateurs</span>`;
           return stat('Proclamateurs', tot, [nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)'), s21txt].filter(Boolean).join('<br>'), true)
             + stat('Âge moyen des proclamateurs', ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', ages.length < procl.length ? `<span class="muted">sur ${ages.length} date(s) connue(s) / ${procl.length}</span>` : '', true)
             + stat('Anciens', live.filter(r => fNow(r) === 'Ancien').length, nouv(newF('Ancien'), 'nouveau(x)'))
@@ -826,7 +826,7 @@ App.circo = (() => {
             + stat('PS', cnt('PS'), nouv(sigCount('Nouveau PS'), 'nouveau(x)'))
             + stat('Études bibliques', sum('eb'), (() => { const eb = st => live.filter(r => r.e.statut === st).reduce((t, r) => t + (Number(r.e.eb) || 0), 0);
               return ['PP', 'PAP', 'PS'].filter(st => eb(st) || cnt(st)).map(st => `${eb(st)} EB par ${st}`).join('<br>'); })())
-            + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', ...campagnesPA(c, asm), sum('pa') > paPers - cnt('PAP') ? `<span class="muted">${sum('pa')} fois au total (hors PAP)</span>` : ''].filter(Boolean).join('<br>'))
+            + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', ...campagnesPA(c, asm)].filter(Boolean).join('<br>'))
             + stat('IR', live.filter(r => r.e.ir > 0).length, sum('ir') > live.filter(r => r.e.ir > 0).length ? `<span class="muted">${sum('ir')} fois au total</span>` : '');
         })()}
         ${stat('Réactivés', evtCount('Réactivé'))}${departs.length ? stat('Départs (non comptés)', departs.length, [['Déménagement', 'déménagement(s)'], ['Décédé(e)', 'décès']].map(([k, l]) => { const n2 = departs.filter(r => r.e.evt === k).length; return n2 ? `${n2} ${l}` : ''; }).filter(Boolean).join('<br>')) : ''}${stat('Emménagements', evtCount('Emménagement'))}${stat('Nouveaux dans la liste', evtCount('Nouveau dans la liste'))}${stat('À signaler', rows.filter(r => sigOf(r)).length, '<span style="background:#ffe866;padding:0 4px;border-radius:3px">lignes surlignées</span>')}
