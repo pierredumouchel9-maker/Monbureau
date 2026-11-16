@@ -370,9 +370,6 @@ App.circo = (() => {
     addExtra('Assistance semaine', 'sem'); addExtra('Assistance week-end', 'we');
     addExtra('Territoires', 'terr'); addExtra('Non parcourus depuis 1 an', 'nonparc', 'terr');
     extra.forEach((x, i) => x.bg = i < 2 ? 'ciel' : 'orange');
-    // Âge moyen des proclamateurs (actifs, PP, PAP, PS et PNB) dont la date de naissance est connue
-    const procl = rows.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB'), ages = procl.filter(r => r.p.naissance).map(r => App.annuaire.yearsSince(r.p.naissance)).filter(a => a !== null && a !== undefined && !isNaN(a));
-    const ageBox = {lab: 'Âge moyen des proclamateurs', v: ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', subs: ages.length < procl.length ? [`sur ${ages.length} date(s) connue(s) / ${procl.length}`] : [], red: true};
 
     const groups = [
       ['Anciens', rows.filter(r => fct(r.p) === 'Ancien'), true],
@@ -423,8 +420,7 @@ App.circo = (() => {
 
       // Chiffres : cases sur 2 lignes
       section('Chiffres du bilan');
-      const base = statItems.map(s => ({lab: s.lab, v: String(s.v), subs: plain(s.sub).split(/\n| · /).map(l => l.trim()).filter(Boolean), red: s.lab === 'Proclamateurs'}));
-      const items = [base[0], ageBox, ...base.slice(1), ...extra];
+      const items = [...statItems.map(s => ({lab: s.lab, v: String(s.v), subs: plain(s.sub).split(/\n| · /).map(l => l.trim()).filter(Boolean), red: s.red})), ...extra];
       const cols = Math.ceil(items.length / 2), gap = 4, bw = (W - 2 * M - gap * (cols - 1)) / cols;
       const wrap = (t, w, size) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (R.widthOfTextAtSize(nx, size) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
       for (const it of items) { it.labL = wrap(it.lab, bw - 8, S(7)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, S(6.5))); }
@@ -436,7 +432,8 @@ App.circo = (() => {
           const bx = M + j * (bw + gap);
           page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7, color: s.bg === 'ciel' ? ciel : s.bg === 'orange' ? orange : rgb(1, 1, 1)});
           let yy = y - S(10);
-          s.labL.forEach(l => { txt(l, bx + 4, yy, {size: S(7), color: mute}); yy -= S(8); });
+          s.labL.forEach((l, li) => txt(l, bx + 4, yy - li * S(8), {size: S(7), color: mute}));
+          yy -= S(8) * Math.max(...rowIt.map(x => x.labL.length));   // chiffres alignés sur la même ligne
           txt(s.v, bx + 4, yy - S(8), {bold: true, size: S(13), color: s.red ? red : ink}); yy -= S(17);
           s.subL.forEach(l => { txt(l, bx + 4, yy, {size: S(6.5), color: mute}); yy -= S(7.5); });
         });
@@ -747,7 +744,7 @@ App.circo = (() => {
     const sum = k => live.reduce((s, r) => s + (Number(r.e[k]) || 0), 0);
     const ppLow = rows.filter(r => r.e.statut === 'PP' && r.e.heures !== null && r.e.heures !== undefined && r.e.heures < objectif).length;
     const statItems = [];
-    const stat = (lab, v, sub = '') => (statItems.push({lab, v, sub}), '') + `<div class="card" style="padding:12px 14px"><div class="muted small">${lab}</div><div class="stat" style="font-size:22px">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
+    const stat = (lab, v, sub = '', red = false) => (statItems.push({lab, v, sub, red}), '') + `<div class="card" style="padding:12px 14px"><div class="muted small" style="min-height:2.6em;line-height:1.3">${lab}</div><div class="stat" style="font-size:22px${red ? ';color:#c81a1a' : ''}">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
     el.innerHTML = `${header('proclamateurs')}
       <div class="row" style="margin-bottom:14px">
         <select id="pAsm" style="width:auto;font-weight:600">${asms.map(a => `<option ${a === asm ? 'selected' : ''}>${api.esc(a)}</option>`).join('')}</select>
@@ -770,7 +767,10 @@ App.circo = (() => {
           const nouv = (n, lab) => n ? `<span style="color:var(--ok);font-weight:600">dont ${n} ${lab}</span>` : '';
           const actifs = live.filter(r => ACTIF(r.e.statut)).length;
           const paPers = live.filter(r => r.e.pa > 0 && !['PP', 'PAP', 'PS'].includes(r.e.statut)).length + cnt('PAP');
-          return stat('Proclamateurs', actifs + cnt('PNB'), `${actifs} actifs (PP, PAP et PS compris) · ${cnt('PNB')} PNB${evtCount('Baptisé') ? '<br>' + nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)') : ''}`)
+          const procl = live.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB');
+          const ages = procl.filter(r => r.p.naissance).map(r => App.annuaire.yearsSince(r.p.naissance)).filter(a => a !== null && a !== undefined && !isNaN(a));
+          return stat('Proclamateurs', actifs + cnt('PNB'), nouv(evtCount('Baptisé'), 'nouveau(x) baptisé(s)'), true)
+            + stat('Âge moyen des proclamateurs', ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) + ' ans' : '—', ages.length < procl.length ? `<span class="muted">sur ${ages.length} date(s) connue(s) / ${procl.length}</span>` : '', true)
             + stat('Anciens', rows.filter(r => fNow(r) === 'Ancien').length, nouv(newF('Ancien'), 'nouveau(x)'))
             + stat('Assistants', rows.filter(r => fNow(r) === 'Assistant').length, nouv(newF('Assistant'), 'nouveau(x)'))
             + stat('PNB', cnt('PNB'), nouv(rows.filter(r => sigHas(r, 'Nouveau PNB') || evtOf(r) === 'Nouveau PNB').length, 'nouveau(x)'))
