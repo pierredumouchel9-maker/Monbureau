@@ -377,7 +377,7 @@ App.circo = (() => {
       ['Pionniers permanents (PP)', rows.filter(r => r.e.statut === 'PP'), false],
       ['Pionniers spéciaux (PS)', rows.filter(r => r.e.statut === 'PS'), false]];
     const objectif = monthsElapsed(c) * HEURES_MOIS;
-    const heures = r => { const h = r.e.heures; if (h === null || h === undefined || h === '') return ''; return `${h} h`; };
+    const heures = r => { const h = r.e.heures; if (h === null || h === undefined || h === '') return ''; return `${h} h (${Math.round(Number(h) / objectif * 100)} %)`; };
     const activite = r => { const b = [];
       if (['PP', 'PS', 'PAP', 'IN', 'PNB'].includes(r.e.statut)) b.push(r.e.statut); else if (pa(r)) b.push(`PA ${pa(r)}×`);
       if (r.e.statut === 'PP' && heures(r)) b.push(heures(r));
@@ -606,11 +606,13 @@ App.circo = (() => {
     if (age(p) !== null) l = l.filter(q => age(q) === null || Math.abs(age(q) - age(p)) <= 15);
     return l.length === 1 ? l[0] : null;
   }
+  // Heures PP : cumul depuis le début de l'année de service (1er septembre), objectif 50 h × mois écoulés.
+  // Réglable par cycle (1 à 12 mois), par exemple 12 pour le total d'une année de service complète.
   function monthsElapsed(c) {
     if (c.mois) return c.mois;
-    const st = cycleStart(c.code), now = new Date();
-    const m = (now.getFullYear() - st.getFullYear()) * 12 + now.getMonth() - st.getMonth(); // mois terminés
-    return Math.max(1, Math.min(6, m));
+    const now = new Date(), sy = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+    const m = (now.getFullYear() - sy) * 12 + now.getMonth() - 8;   // mois terminés depuis septembre
+    return Math.max(1, Math.min(12, m));
   }
   function entry(c, p) {
     const S = suivi(c);
@@ -749,7 +751,7 @@ App.circo = (() => {
       <div class="row" style="margin-bottom:14px">
         <select id="pAsm" style="width:auto;font-weight:600">${asms.map(a => `<option ${a === asm ? 'selected' : ''}>${api.esc(a)}</option>`).join('')}</select>
         <select id="pCyc" style="width:auto">${cycles.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>Cycle ${x.code}</option>`).join('')}</select>
-        <label class="row small">Mois pris en compte <input type="number" id="pMois" min="1" max="6" value="${mois}" style="width:64px;padding:4px 6px"></label>
+        <label class="row small" title="Mois de l’année de service (depuis le 1er septembre) couverts par les heures PP saisies ; 12 pour une année complète">Mois depuis septembre <input type="number" id="pMois" min="1" max="12" value="${mois}" style="width:64px;padding:4px 6px"></label>
         ${badges(asm) ? `<span>${badges(asm)}</span>` : ''}
         <span class="small muted">Objectif PP : ${objectif} h (${HEURES_MOIS} h × ${mois} mois)</span>
         <span style="flex:1"></span>
@@ -780,6 +782,8 @@ App.circo = (() => {
             + stat('Études bibliques', sum('eb'), (() => { const eb = st => live.filter(r => r.e.statut === st).reduce((t, r) => t + (Number(r.e.eb) || 0), 0);
               return ['PP', 'PAP', 'PS'].filter(st => eb(st) || cnt(st)).map(st => `${eb(st)} EB par ${st}`).join('<br>'); })())
             + stat('PA', paPers, [cnt('PAP') ? `dont ${cnt('PAP')} PAP` : '', sum('pa') > paPers - cnt('PAP') ? `<span class="muted">${sum('pa')} fois au total (hors PAP)</span>` : ''].filter(Boolean).join('<br>'))
+            + (() => { const v = n(c.valeurs?.[asm]?.pa), pc = prevCycle(c), pv = pc ? n(pc.valeurs?.[asm]?.pa) : null;
+                return stat('PA campagne mondiale', v === null ? '—' : v, pv !== null ? `<span class="muted">${pc.code} : ${pv}</span>` : ''); })()
             + stat('IR', live.filter(r => r.e.ir > 0).length, sum('ir') > live.filter(r => r.e.ir > 0).length ? `<span class="muted">${sum('ir')} fois au total</span>` : '');
         })()}
         ${stat('Réactivés', evtCount('Réactivé'))}${stat('Emménagements', evtCount('Emménagement'))}${stat('Nouveaux dans la liste', evtCount('Nouveau dans la liste'))}${stat('À signaler', rows.filter(r => sigOf(r)).length, '<span style="background:#ffe866;padding:0 4px;border-radius:3px">lignes surlignées</span>')}
@@ -844,7 +848,7 @@ App.circo = (() => {
     const redraw = () => proclamateursView(el, state);
     api.$('#pAsm', el).addEventListener('change', e => { state.asm = e.target.value; redraw(); });
     api.$('#pCyc', el).addEventListener('change', e => { state.cycle = e.target.value; redraw(); });
-    api.$('#pMois', el).addEventListener('change', e => { const v = Number(e.target.value); c.mois = v >= 1 && v <= 6 ? v : undefined; api.save(); redraw(); });
+    api.$('#pMois', el).addEventListener('change', e => { const v = Number(e.target.value); c.mois = v >= 1 && v <= 12 ? v : undefined; api.save(); redraw(); });
     api.$('#pQ', el).addEventListener('input', e => { state.q = e.target.value; clearTimeout(state.t); state.t = setTimeout(() => { redraw(); const i = api.$('#pQ', el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); });
     api.$('#pF', el).addEventListener('change', e => { state.filt = e.target.value; redraw(); });
     api.$('#pImp', el).addEventListener('click', () => importSuiviFlow(redraw));
