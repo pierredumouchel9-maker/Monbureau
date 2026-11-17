@@ -386,6 +386,7 @@ App.circo = (() => {
       await api.docs.add(file, {asm: name, kind});
       for (const d of old) await api.docs.remove(d.id);
       api.toast(`${DOC_KINDS.find(x => x.k === kind).l} enregistré${kind === 'groupes' ? 's' : ''}`); redraw();
+      if (kind === 'organigramme' && /\.(pdf|xlsx|docx)$/i.test(file.name)) { const nd = api.docs.list({asm: name, kind})[0]; if (nd) readOrganigramme(name, nd.id, redraw); }
     });
     for (const b of api.$$('[data-docopen]', el)) b.addEventListener('click', () => {
       const d = api.docs.list().find(x => x.id === b.dataset.docopen); if (!d) return;
@@ -421,10 +422,12 @@ App.circo = (() => {
     return {blocks, autres, manque, doublons, any: mem.some(p => (p.resp || []).length)};
   }
   function organiCard(name) {
+    const od = api.docs.list({asm: name, kind: 'organigramme'})[0];
+    const readBtn = od ? `<div style="margin-top:8px"><button class="btn primary" data-docread="${od.id}">Mettre à jour d’après l’organigramme importé (${api.esc(od.name)})</button></div>` : '';
     const o = organi(name), fn = p => `${api.esc(p.prenom || '')} ${api.esc((p.nom || '').toUpperCase())}`;
     const who = x => [...x.main.map(fn), ...x.adj.map(p => `<span class="muted">${fn(p)} (adj.)</span>`)].join(', ') || '<span style="color:var(--danger,#c00)">à pourvoir</span>';
     if (!o.any) return `<div class="card" style="margin-bottom:16px"><strong>Organigramme — Comité de service</strong>
-      <p class="small muted" style="margin:6px 0 0">Aucune responsabilité notée pour cette assemblée. Importez l’organigramme ci-dessus puis « Lire les responsabilités », ou ajoutez-les dans l’étude des proclamateurs.</p></div>`;
+      <p class="small muted" style="margin:6px 0 0">Aucune responsabilité notée pour cette assemblée. Importez l’organigramme ci-dessus puis « Lire les responsabilités », ou ajoutez-les dans l’étude des proclamateurs.</p>${readBtn}</div>`;
     return `<div class="card" style="margin-bottom:16px"><strong>Organigramme — Comité de service</strong>
       ${o.manque.length ? `<div class="notice warn small" style="margin-top:8px">À pourvoir ou non renseigné : <strong>${o.manque.map(api.esc).join(', ')}</strong></div>` : '<div class="small" style="margin-top:6px;color:#1d5a35">✓ Comité de service et services supervisés tous renseignés</div>'}
       ${o.doublons.length ? `<div class="notice danger small" style="margin-top:6px">Plusieurs frères notés comme : <strong>${o.doublons.map(api.esc).join(', ')}</strong> (vérifiez)</div>` : ''}
@@ -435,7 +438,7 @@ App.circo = (() => {
         <ul class="small" style="margin:0 0 4px 16px;padding:0">${b.svc.map(x => `<li><span class="muted">${api.esc(x.l)} :</span> ${who(x)}</li>`).join('')}</ul>
         ${b.aussi ? `<div class="small muted">Aussi : ${api.esc(b.aussi)}</div>` : ''}</div>`).join('')}
       </div>
-      ${o.autres.length ? `<div class="small" style="margin-top:8px"><span class="muted">Autres responsabilités :</span> ${o.autres.map(x => `<strong>${api.esc(x.r)}</strong> ${who(x)}`).join(' · ')}</div>` : ''}</div>`;
+      ${o.autres.length ? `<div class="small" style="margin-top:8px"><span class="muted">Autres responsabilités :</span> ${o.autres.map(x => `<strong>${api.esc(x.r)}</strong> ${who(x)}`).join(' · ')}</div>` : ''}${o.manque.length || o.doublons.length ? readBtn : ''}</div>`;
   }
 
   // Lecture d'un organigramme : propose les responsabilités trouvées, à valider frère par frère
