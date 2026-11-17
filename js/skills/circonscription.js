@@ -682,30 +682,6 @@ App.circo = (() => {
       }
       y = y0 - totH;
 
-      // Organigramme : Comité de service et services supervisés
-      const og = organi(asm);
-      if (og.any) {
-        section('Organigramme — Comité de service');
-        const gap3 = 12, cw3 = (W - 2 * M - 2 * gap3) / 3, lo = S(10.5);
-        const names = x => [...x.main.map(nm), ...x.adj.map(p => nm(p) + ' (adj.)')].join(', ');
-        const cols3 = og.blocks.map(b => [{lab: b.titre + ' : ', d: names(b.chefs), bold: true, miss: !b.chefs.main.length}, ...b.svc.map(x => ({lab: '   ' + x.l + ' : ', d: names(x), miss: !x.main.length}))]);
-        const nL = Math.max(...cols3.map(l => l.length));
-        need(nL * lo + S(4));
-        cols3.forEach((l, j) => {
-          const cx = M + j * (cw3 + gap3); page.drawRectangle({x: cx - 2, y: y - nL * lo - S(3), width: cw3 + 4, height: nL * lo + S(3), color: ciel});
-          l.forEach((it, i) => { const f1 = it.bold ? B : R, s1 = it.bold ? fs : fd, lab = fit(it.lab, f1, s1, cw3 * .62), lw = f1.widthOfTextAtSize(lab, s1), yy = y - S(9) - i * lo;
-            txt(lab, cx, yy, {size: s1, bold: it.bold, color: it.bold ? ink : mute});
-            txt(fit(it.miss && !it.d ? 'à pourvoir' : it.d, R, s1, cw3 - lw - 2), cx + lw, yy, {size: s1, color: it.miss ? red : ink}); });
-        });
-        y -= nL * lo + S(6);
-        const lineWrap = (lab, body, color) => { const lw = B.widthOfTextAtSize(T(lab), fd), out = []; let cur = '';
-          for (const w of body.split(' ')) { const nx = cur ? cur + ' ' + w : w; if (R.widthOfTextAtSize(T(nx), fd) > W - 2 * M - lw && cur) { out.push(cur); cur = w; } else cur = nx; } if (cur) out.push(cur);
-          need(out.length * S(10.5)); txt(lab, M, y - S(8), {bold: true, size: fd, color}); out.forEach(l => { txt(l, M + lw, y - S(8), {size: fd, color}); y -= S(10.5); }); };
-        if (og.autres.length) lineWrap('Autres responsabilités : ', og.autres.map(x => `${x.r} : ${names(x)}`).join(' · '), ink);
-        if (og.manque.length) lineWrap('À pourvoir ou non renseigné : ', og.manque.join(', '), red);
-        if (og.doublons.length) lineWrap('À vérifier (plusieurs frères) : ', og.doublons.join(', '), red);
-      }
-
       // Irréguliers : colonnes
       section(`Proclamateurs irréguliers (IR) — ${ir.length}`);
       if (!ir.length) { txt('Aucun', M, y - S(9), {color: mute, size: S(9)}); y -= lh; }
@@ -738,7 +714,80 @@ App.circo = (() => {
     // Une page si possible sans descendre sous une taille lisible ; sinon le bilan continue sur une 2e page
     // Toujours une seule page : on réduit d'abord le bilan chiffré, puis, si besoin, le reste
     for (const [k, kc] of [[1, .9], [1, .8], [.95, .78], [.9, .76], [.85, .74], [.8, .72], [.76, .7], [.72, .68], [.68, .65], [.64, .62], [.6, .58], [.55, .55], [.5, .5]]) { res = await build(k, kc); if (!res.over) break; }
+    if (organi(asm).any) await orgPage(res.doc, c, asm);   // verso : organigramme
     return new Blob([await res.doc.save()], {type: 'application/pdf'});
+  }
+  // Verso du bilan : organigramme en cases reliées (Collège des anciens → Comité de service → services supervisés)
+  async function orgPage(doc, c, asm) {
+    const {StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
+    const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold), I = await doc.embedFont(StandardFonts.HelveticaOblique);
+    const W = 841.89, H = 595.28, M = 30, page = doc.addPage([W, H]);
+    const ink = rgb(.1, .1, .12), mute = rgb(.42, .45, .5), red = rgb(.85, .1, .1), white = rgb(1, 1, 1);
+    const COL = {vert: rgb(.1, .75, .55), orange: rgb(.93, .49, .19), bleu: rgb(.04, .56, 1), violet: rgb(.47, .36, .68), gris: rgb(.38, .44, .52)};
+    const o = organi(asm), nm = p => `${p.prenom || ''} ${(p.nom || '').toUpperCase()}`.trim();
+    const Y = t => H - t;   // coordonnées depuis le haut
+    const width = (t, f, sz) => f.widthOfTextAtSize(T(t), sz);
+    const center = (t, f, sz, cx, top, color) => page.drawText(T(t), {x: cx - width(t, f, sz) / 2, y: Y(top), size: sz, font: f, color});
+    const fitT = (t, f, sz, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, sz) > w) t = t.slice(0, -2) + '…'; return t; };
+    const wrapT = (t, f, sz, w) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (f.widthOfTextAtSize(nx, sz) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
+    const line = (x1, t1, x2, t2, color) => page.drawLine({start: {x: x1, y: Y(t1)}, end: {x: x2, y: Y(t2)}, thickness: 1.2, color});
+    const MAXN = 6, HL = 10.5, NL = 12;
+    const peopleOf = x => { const l = [...(!x.main.length && x.adj.length ? [{t: 'à pourvoir', miss: true}] : []), ...x.main.map(p => ({t: nm(p), b: true})), ...x.adj.map(p => ({t: nm(p) + ' (adj.)', b: false}))];
+      return l.length > MAXN ? [...l.slice(0, MAXN - 1), {t: `+ ${l.length - MAXN + 1} autres`, b: false}] : l; };
+    const measure = (title, w, x, note, body) => { const tl = wrapT(title.toUpperCase(), B, 8.5, w - 8); const pl = body ? [body] : peopleOf(x); const nl = note ? wrapT(note, I, 6.8, w - 8) : [];
+      return {tl, pl, nl, th: 7 + tl.length * HL, bh: 5 + Math.max(1, pl.length) * NL + nl.length * 8.5 + 2}; };
+    function box(x, top, w, title, color, who, note, body) {
+      const m = measure(title, w, who, note, body), cx = x + w / 2;
+      page.drawRectangle({x, y: Y(top + m.th), width: w, height: m.th, color});
+      m.tl.forEach((l, i) => center(l, B, 8.5, cx, top + 4 + (i + 1) * HL - 2.5, white));
+      page.drawRectangle({x, y: Y(top + m.th + m.bh), width: w, height: m.bh, color: white, borderColor: color, borderWidth: 1});
+      let yy = top + m.th + 3;
+      if (body) { yy += NL; center(fitT(body, R, 8, w - 6), R, 8, cx, yy - 3, mute); }
+      else if (!m.pl.length) { yy += NL; center('à pourvoir', I, 8, cx, yy - 3, red); }
+      else for (const pp of m.pl) { yy += NL; const f = pp.miss ? I : pp.b ? B : R; center(fitT(pp.t, f, 8, w - 6), f, 8, cx, yy - 3, pp.miss ? red : ink); }
+      for (const l of m.nl) { yy += 8.5; center(l, I, 6.8, cx, yy - 1.5, mute); }
+      return {cx, top, bottom: top + m.th + m.bh};
+    }
+    // Titre
+    center(`ORGANIGRAMME — ASSEMBLÉE ${asm.toUpperCase()}`, B, 15, W / 2, 38, ink);
+    center(`Cycle ${c.code} · d’après les responsabilités notées dans Mon Bureau`, R, 8.5, W / 2, 52, mute);
+    if (o.manque.length || o.doublons.length) center(fitT([o.manque.length ? 'À pourvoir ou non renseigné : ' + o.manque.join(', ') : '', o.doublons.length ? 'À vérifier : ' + o.doublons.join(', ') : ''].filter(Boolean).join('   ·   '), R, 8, W - 2 * M), R, 8, W / 2, 65, red);
+    // Collège des anciens
+    const mem = members(asm), fct = p => fonctionAt(c, p) ?? p.fonction;
+    const nA = mem.filter(p => fct(p) === 'Ancien').length, nS = mem.filter(p => fct(p) === 'Assistant').length;
+    const head = box(W / 2 - 110, 76, 220, 'Collège des anciens', COL.vert, null, null, `${nA} ancien${nA > 1 ? 's' : ''} · ${nS} assistant${nS > 1 ? 's' : ''}`);
+    // Comité de service (3 cases) au-dessus de leurs services (6 colonnes)
+    const g = 12, sw = (W - 2 * M - 5 * g) / 6, slotX = i => M + i * (sw + g);
+    const colors = [COL.orange, COL.bleu, COL.violet], spans = [[0, 3], [3, 1], [4, 2]];
+    const chefTop = head.bottom + 34;
+    const chefs = o.blocks.map((b, i) => { const [a, n] = spans[i], gx = slotX(a), gw = n * sw + (n - 1) * g, w = Math.min(gw, n > 1 ? 210 : sw);
+      return {b, i, x: gx + (gw - w) / 2, w}; });
+    const drawn = chefs.map(ch => box(ch.x, chefTop, ch.w, ch.b.titre, colors[ch.i], ch.b.chefs, ch.b.aussi ? 'Aussi : ' + ch.b.aussi : ''));
+    const bar1 = head.bottom + 17;
+    line(head.cx, head.bottom, head.cx, bar1, COL.vert); line(drawn[0].cx, bar1, drawn[2].cx, bar1, COL.vert);
+    drawn.forEach(d => line(d.cx, bar1, d.cx, chefTop, COL.vert));
+    const svcTop = Math.max(...drawn.map(d => d.bottom)) + 34;
+    let svcBottom = svcTop;
+    chefs.forEach((ch, i) => {
+      const [a] = spans[i], d = drawn[i], bar = svcTop - 15;
+      const sv = ch.b.svc.map((x, k) => box(slotX(a + k), svcTop, sw, x.l.replace(/^Préposés? (aux?|à l’) ?/i, '').replace(/^Programme des /, ''), colors[i], x));
+      svcBottom = Math.max(svcBottom, ...sv.map(v => v.bottom));
+      line(d.cx, d.bottom, d.cx, bar, colors[i]);
+      if (sv.length > 1) line(sv[0].cx, bar, sv.at(-1).cx, bar, colors[i]);
+      sv.forEach(v => { line(v.cx, bar, v.cx, svcTop, colors[i]); if (sv.length === 1) line(d.cx, bar, v.cx, bar, colors[i]); });
+    });
+    // Autres responsabilités (TG et VCM toujours présents)
+    const autres = [...new Set(['TG', 'VCM', ...o.autres.map(x => x.r)])].map(r => ({r, ...(o.autres.find(x => x.r === r) || {main: [], adj: []})}));
+    const grp = (() => { const l = mem.filter(p => !['Radié', 'Démission'].includes(p.fonction)); return {main: l.filter(p => (p.resp || []).includes('Resp. de groupe')), adj: l.filter(p => (p.resp || []).includes('Resp. de groupe adj.'))}; })();
+    if (grp.main.length || grp.adj.length) autres.push({r: 'Resp. de groupe', ...grp});
+    const LBL = {TG: 'Conducteur Tour de Garde', VCM: 'Réunion Vie et ministère', 'Conseiller adj.': 'Conseiller adjoint', 'Comité de gestion': 'Comité de gestion', 'Resp. de groupe': 'Responsables de groupe', LDC: 'LDC', CLH: 'CLH'};
+    let top = svcBottom + 30;
+    page.drawText(T('AUTRES RESPONSABILITÉS'), {x: M, y: Y(top - 8), size: 8.5, font: B, color: COL.gris}); top += 2;
+    for (let i = 0; i < autres.length; i += 6) {
+      const row = autres.slice(i, i + 6).map((x, k) => box(slotX(k), top, sw, LBL[x.r] || x.r, COL.gris, x));
+      top = Math.max(...row.map(v => v.bottom)) + 12;
+    }
+    page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
   }
   function assembleeView(el, name) {
     const S = store(), cycles = sortedCycles();
