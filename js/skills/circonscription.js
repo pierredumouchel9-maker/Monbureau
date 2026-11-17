@@ -524,29 +524,31 @@ App.circo = (() => {
       const phS = S(24), imgs = {};
       const photoOf = async pid => { const src = api.photos.get(pid); if (!src) return null; return imgs[pid] ??= await doc.embedJpg(Uint8Array.from(atob(src.split(',')[1]), ch => ch.charCodeAt(0))); };
       const hOf = bk => !bk ? 0 : withPhoto ? Math.max(phS, bk.sub ? S(23) : 0) + S(3) : (bk.sub ? S(22) : lh);
-      const maxN = Math.max(1, ...cols4.map(l => l.length));
-      const rowH = kk => Math.max(...cols4.map(l => hOf(l[kk])));
-      if (!paging) { let tot = 0; for (let kk = 0; kk < maxN; kk++) tot += rowH(kk); need(tot); }
-      for (let kk = 0; kk < maxN; kk++) {
-        const hR = rowH(kk); if (paging) need(hR);
-        for (let gi = 0; gi < cols4.length; gi++) { const bk = cols4[gi][kk]; if (!bk) continue;
-          const x0 = M + gi * (cw + 10);
-          if (bk.hi) page.drawRectangle({x: x0 - 2, y: y - hR, width: cw + 4, height: hR, color: jaune2});
-          else if (bk.bi % 2 === 0) page.drawRectangle({x: x0 - 2, y: y - hR, width: cw + 4, height: hR, color: ciel});
+      // Chaque colonne se remplit indépendamment (pas de ligne vide quand une colonne a des blocs plus hauts)
+      const colH = cols4.map(l => l.reduce((t, bk) => t + hOf(bk), 0)), totH = Math.max(lh, ...colH);
+      need(totH);
+      const y0 = y;
+      for (let gi = 0; gi < cols4.length; gi++) {
+        let yc = y0;
+        for (const bk of cols4[gi]) {
+          const hR = hOf(bk), x0 = M + gi * (cw + 10);
+          if (bk.hi) page.drawRectangle({x: x0 - 2, y: yc - hR, width: cw + 4, height: hR, color: jaune2});
+          else if (bk.bi % 2 === 0) page.drawRectangle({x: x0 - 2, y: yc - hR, width: cw + 4, height: hR, color: ciel});
           let tx = x0;
           if (withPhoto) {
-            const im = await photoOf(bk.pid); if (im) page.drawImage(im, {x: x0, y: y - phS - S(1.5), width: phS, height: phS});
-            if (twoPh) { const im2 = bk.sub ? await photoOf(bk.sub.pid) : null; if (im2) page.drawImage(im2, {x: x0 + phS + S(2), y: y - phS - S(1.5), width: phS, height: phS}); }
+            const im = await photoOf(bk.pid); if (im) page.drawImage(im, {x: x0, y: yc - phS - S(1.5), width: phS, height: phS});
+            if (twoPh) { const im2 = bk.sub ? await photoOf(bk.sub.pid) : null; if (im2) page.drawImage(im2, {x: x0 + phS + S(2), y: yc - phS - S(1.5), width: phS, height: phS}); }
             tx = x0 + (twoPh ? 2 * phS + S(6) : phS + S(4));
           }
           const wmax = cw - (tx - x0);
           const line = (t, d, yb, bold) => { const f1 = bold ? B : R, s1 = bold ? fs : fd; const n1 = fit(t, f1, s1, d ? wmax * .6 : wmax), w1 = f1.widthOfTextAtSize(n1, s1);
             txt(n1, tx, yb, {size: s1, bold, color: bold ? ink : mute}); if (d) txt(fit(d, R, fd, wmax - w1 - 5), tx + w1 + 4, yb, {size: fd, color: mute}); };
-          if (bk.sub) { line(bk.name, bk.d, y - S(10), true); line(bk.sub.name, bk.sub.d, y - S(20), false); }
-          else line(bk.name, bk.d, withPhoto ? y - hR / 2 - S(3) : y - S(9), true);
+          if (bk.sub) { line(bk.name, bk.d, yc - S(10), true); line(bk.sub.name, bk.sub.d, yc - S(20), false); }
+          else line(bk.name, bk.d, withPhoto ? yc - hR / 2 - S(3) : yc - S(9), true);
+          yc -= hR;
         }
-        y -= hR;
       }
+      y = y0 - totH;
 
       // Irréguliers : colonnes
       section(`Proclamateurs irréguliers (IR) — ${ir.length}`);
@@ -556,7 +558,7 @@ App.circo = (() => {
       for (let kk = 0; kk < per; kk++) {
         if (paging) need(lh);
         for (let j = 0; j < icol; j++) { const r = ir[j * per + kk]; if (!r) continue; const cx = M + j * iw, tail = `${r.e.ir}×${r.e.statut === 'PNB' ? ' PNB' : ''}`;
-          txt(fit(nm(r.p), R, fs, iw - S(38)), cx, y - S(9), {size: fs}); txt(tail, cx + iw - S(34), y - S(9), {size: fd, color: mute}); }
+          txt(fit(nm(r.p), R, fs, iw - S(52)), cx, y - S(9), {size: fs}); txt(tail, cx + iw - S(48), y - S(9), {size: fd, color: mute}); }
         y -= lh;
       }
       // Signalements
@@ -579,7 +581,7 @@ App.circo = (() => {
     let res;
     // Une page si possible sans descendre sous une taille lisible ; sinon le bilan continue sur une 2e page
     // Toujours une seule page : on réduit d'abord le bilan chiffré, puis, si besoin, le reste
-    for (const [k, kc] of [[1, .85], [1, .75], [1, .68], [.94, .68], [.88, .65], [.83, .62], [.78, .6], [.73, .58], [.68, .55], [.63, .52], [.58, .5], [.53, .48], [.48, .45]]) { res = await build(k, kc); if (!res.over) break; }
+    for (const [k, kc] of [[1, .9], [1, .8], [.95, .78], [.9, .76], [.85, .74], [.8, .72], [.76, .7], [.72, .68], [.68, .65], [.64, .62], [.6, .58], [.55, .55], [.5, .5]]) { res = await build(k, kc); if (!res.over) break; }
     return new Blob([await res.doc.save()], {type: 'application/pdf'});
   }
   function assembleeView(el, name) {
