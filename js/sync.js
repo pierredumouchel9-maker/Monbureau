@@ -77,12 +77,47 @@ App.dropbox = (() => {
     const j = await r.json(); return {rev: j.rev};
   }
 
+  /* ----- Documents joints : un fichier Dropbox par document (/docs/<id>.bin), envoyé une seule fois ----- */
+  const docPath = id => `/docs/${id}.bin`;
+  async function uploadDoc(id) {
+    const box = await App.docBox(id); if (!box) return false;
+    const r = await fetch('https://content.dropboxapi.com/2/files/upload', {method: 'POST', headers: {Authorization: 'Bearer ' + await token(),
+      'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': JSON.stringify({path: docPath(id), mode: 'overwrite', mute: true})}, body: JSON.stringify(box)});
+    if (!r.ok) throw new Error('Dropbox (envoi d’un document) : ' + r.status);
+    return true;
+  }
+  async function downloadDoc(id) {
+    const r = await fetch('https://content.dropboxapi.com/2/files/download', {method: 'POST', headers: {Authorization: 'Bearer ' + await token(), 'Dropbox-API-Arg': JSON.stringify({path: docPath(id)})}});
+    if (r.status === 409) return null;   // pas encore envoyé par l'autre appareil
+    if (!r.ok) throw new Error('Dropbox (lecture d’un document) : ' + r.status);
+    return JSON.parse(await r.text());
+  }
+  async function deleteDoc(id) {
+    const r = await fetch('https://api.dropboxapi.com/2/files/delete_v2', {method: 'POST', headers: {Authorization: 'Bearer ' + await token(), 'Content-Type': 'application/json'}, body: JSON.stringify({path: docPath(id)})});
+    if (!r.ok && r.status !== 409) throw new Error('Dropbox (suppression d’un document) : ' + r.status);
+  }
+  // Avant la base : envoyer les documents ajoutés ici (pour qu'ils existent dans Dropbox quand la base y arrive)
+  async function pushDocs() {
+    const docs = api.data?.docs || {}, st = await getState(), up = new Set(st.docsUp || []);
+    let n = 0; for (const id of await App.docKeys()) if (docs[id] && !up.has(id)) { if (await uploadDoc(id)) { up.add(id); n++; } }
+    if (n) await setState({docsUp: [...up]});
+  }
+  // Après accord sur la base : récupérer les documents manquants, effacer ceux qui ont été retirés
+  async function pullDocs() {
+    const docs = api.data?.docs || {}, st = await getState(), up = new Set(st.docsUp || []), local = new Set(await App.docKeys());
+    for (const id of Object.keys(docs)) if (!local.has(id)) { const box = await downloadDoc(id); if (box) { await App.putDocBox(id, box); up.add(id); } }
+    for (const id of local) if (!docs[id]) await App.delDocBox(id);
+    for (const id of [...up]) if (!docs[id]) { await deleteDoc(id); up.delete(id); }
+    await setState({docsUp: [...up]});
+  }
+
   /* ----- Synchronisation ----- */
   function sync(opts = {}) { return busy ??= run(opts).finally(() => { busy = null; }); }
   async function run({quiet = false} = {}) {
     if (!(await connected())) return;
     let st = await getState();
     try {
+      await pushDocs();
       const rm = await remoteMeta();
       if (!rm) {                                   // premier envoi
         const up = await upload(null); if (up.conflict) return run({quiet});
@@ -97,12 +132,14 @@ App.dropbox = (() => {
           const choice = await conflict(file, st);
           if (choice === 'local') { const up = await upload(rm.rev); if (up.conflict) return run({quiet}); await setState({rev: up.rev, dirty: false, lastSync: new Date().toISOString(), error: ''}); }
           else if (choice === 'remote') { await App.adoptRemote(file); await setState({rev: rm.rev, dirty: false, lastSync: new Date().toISOString(), error: ''}); api.toast('Données reçues de Dropbox'); }
+          if (choice) await pullDocs();
           return;
         }
         await App.adoptRemote(file);
         await setState({rev: rm.rev, dirty: false, lastSync: new Date().toISOString(), error: ''});
         if (!quiet) api.toast(`Données mises à jour depuis ${file.device || 'un autre appareil'}`);
       }
+      await pullDocs();
       if (!quiet) api.toast('Synchronisé avec Dropbox');
     } catch (e) {
       await setState({error: e.message});

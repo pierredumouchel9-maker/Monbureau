@@ -358,6 +358,51 @@ App.circo = (() => {
     for (const a of api.$$('[data-delgrp]', el)) a.onclick = e => { e.preventDefault(); f().groupes = (f().groupes || []).filter(g => g !== a.dataset.delgrp); api.save(); redraw(); };
   }
 
+  // Documents joints à une assemblée (une seule version gardée par type ; stockés chiffrés à part, synchronisés un par un)
+  const DOC_KINDS = [{k: 'organigramme', l: 'Organigramme'}, {k: 'groupes', l: 'Groupes de prédication'}];
+  const DOC_ACCEPT = '.pdf,.xlsx,.xls,.docx,.doc,application/pdf';
+  const kSize = b => b > 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
+  const docIcon = d => /pdf/.test(d.type) || /\.pdf$/i.test(d.name) ? '📕' : /sheet|excel/.test(d.type) || /\.xlsx?$/i.test(d.name) ? '📗' : /word/.test(d.type) || /\.docx?$/i.test(d.name) ? '📘' : '📄';
+  function docsCard(name) {
+    const row = kd => {
+      const d = api.docs.list({asm: name, kind: kd.k}).sort((a, b) => b.date.localeCompare(a.date))[0];
+      return `<div class="row" style="gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line, #e5e5e5)">
+        <div style="min-width:190px"><strong>${kd.l}</strong></div>
+        ${d ? `<div style="flex:1;min-width:0">${docIcon(d)} <span title="${api.esc(d.name)}">${api.esc(d.name)}</span> <span class="small muted">· ${kSize(d.size)} · importé le ${api.dateCourte(d.date)}</span> <span class="small muted" data-docwait="${d.id}"></span></div>
+          <button class="btn" data-docopen="${d.id}">Ouvrir</button><button class="btn" data-docadd="${kd.k}">Remplacer</button><button class="btn" data-docdel="${d.id}" title="Retirer ce document">✕</button>`
+          : `<div style="flex:1" class="small muted">Aucun document</div><button class="btn" data-docadd="${kd.k}">Ajouter (PDF, Excel, Word)</button>`}
+      </div>`;
+    };
+    return `<div class="card" style="margin-bottom:16px"><strong>Documents de l’assemblée</strong>
+      <div style="margin-top:8px">${DOC_KINDS.map(row).join('')}</div>
+      <p class="small muted" style="margin:6px 0 0">Seule la dernière version est gardée. Les documents sont chiffrés sur l’appareil et inclus dans les sauvegardes et la synchronisation.</p></div>`;
+  }
+  function bindDocs(el, name, redraw) {
+    for (const b of api.$$('[data-docadd]', el)) b.addEventListener('click', async () => {
+      const kind = b.dataset.docadd, file = await api.pickFile(DOC_ACCEPT); if (!file) return;
+      if (!/\.(pdf|xlsx?|docx?)$/i.test(file.name)) return api.toast('Choisissez un fichier PDF, Excel ou Word.', 'error');
+      if (file.size > 15 * 1048576) return api.toast(`Fichier trop volumineux (${kSize(file.size)}) : 15 Mo au maximum.`, 'error');
+      const old = api.docs.list({asm: name, kind});
+      await api.docs.add(file, {asm: name, kind});
+      for (const d of old) await api.docs.remove(d.id);
+      api.toast(`${DOC_KINDS.find(x => x.k === kind).l} enregistré${kind === 'groupes' ? 's' : ''}`); redraw();
+    });
+    for (const b of api.$$('[data-docopen]', el)) b.addEventListener('click', () => {
+      const d = api.docs.list().find(x => x.id === b.dataset.docopen); if (!d) return;
+      const isPdf = /pdf/.test(d.type), win = isPdf ? window.open('about:blank', '_blank') : null;   // ouvert pendant le clic (Safari)
+      api.docs.blob(d.id).then(blob => {
+        if (!blob) { if (win) win.close(); return api.toast('Document pas encore reçu sur cet appareil : synchronisez puis réessayez.', 'error'); }
+        if (win) win.location = URL.createObjectURL(blob); else api.download(d.name, blob);
+      }).catch(e => { if (win) win.close(); api.toast('Ouverture impossible : ' + e.message, 'error'); });
+    });
+    for (const b of api.$$('[data-docdel]', el)) b.addEventListener('click', async () => {
+      const d = api.docs.list().find(x => x.id === b.dataset.docdel); if (!d) return;
+      if (!(await api.confirm('Retirer le document', `Retirer « ${d.name} » de ${name} ?`, 'Retirer', true))) return;
+      await api.docs.remove(d.id); redraw();
+    });
+    for (const s of api.$$('[data-docwait]', el)) api.docs.available(s.dataset.docwait).then(ok => { if (!ok) s.textContent = '· en attente de synchronisation'; });
+  }
+
   // Trombinoscope d'une assemblée : A4 paysage, 8 × 3 vignettes par page (photo ou initiales, nom, fonction et statut)
   async function trombiPdf(c, asm, rows) {
     const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
@@ -593,6 +638,7 @@ App.circo = (() => {
     el.innerHTML = `<div class="page-head"><div><h1>${api.esc(name)} <span style="font-size:14px;vertical-align:middle">${badges(name)}</span></h1><p><a href="#/circonscription">← Tableau de bord</a> · <a href="#/circonscription/proclamateurs/${encodeURIComponent(name)}">Étude des proclamateurs</a></p></div>
       <div class="row"><button class="btn" id="fPdf">Fiche de préparation de visite (PDF)</button><button class="btn primary" id="fSave">Enregistrer la fiche</button></div></div>
       ${particulCard(name)}
+      ${docsCard(name)}
       <div class="grid" style="margin-bottom:16px">
         <div class="card"><div class="muted small">Dans l'annuaire</div><div class="stat">${mem.length}</div><div class="small muted">${anc} anciens · ${ass} assistants</div></div>
         ${last ? ['procl', 'pp', 'sem'].map(k => { const v = n(last.valeurs[name]?.[k]); const pv = prevCycle(last) ? n(prevCycle(last).valeurs[name]?.[k]) : null;
@@ -612,6 +658,7 @@ App.circo = (() => {
     const saveForm = () => { const fm = api.$('#fForm', el); for (const x of FICHE) f[x.k] = fm[x.k].value.trim(); api.save(); };
     api.$('#fSave', el).addEventListener('click', () => { saveForm(); api.toast('Fiche enregistrée'); });
     bindParticul(el, name, () => { saveForm(); assembleeView(el, name); });
+    bindDocs(el, name, () => { saveForm(); assembleeView(el, name); });
     api.$('#fPdf', el).addEventListener('click', async () => {
       saveForm();
       const prof = api.data.settings.profil, prev = last ? prevCycle(last) : null;

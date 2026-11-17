@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.13.1';
+  const VERSION = '0.14.0';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -76,7 +76,7 @@ const App = (() => {
       version: 1,
       settings: {autoLockMin: 5, lockOnHide: true, lastBackup: null,
         profil: {prenom: '', nom: '', fonction: '', telephone: '', email: '', entete: ''}},
-      persons: [], congregations: [], templates: [],
+      persons: [], congregations: [], templates: [], docs: {},
       skills: {disabled: {}},
       modules: {}
     };
@@ -96,6 +96,30 @@ const App = (() => {
     async setMany(map) { await photoApi.load(); Object.assign(photos, map); await kvSet('photos', await seal(key, photos)); emit('saved'); },
     async prune(ids) { await photoApi.load(); let n = 0; for (const id of Object.keys(photos)) if (!ids.has(id)) { delete photos[id]; n++; } if (n) await kvSet('photos', await seal(key, photos)); return n; }
   };
+
+  /* ---------- Documents joints (organigrammes, groupes de prédication…) ----------
+     Un enregistrement chiffré par document (kv « doc:<id> »), lu seulement à l'ouverture ;
+     la liste (nom, type, taille, assemblée…) est dans data.docs. */
+  async function sealBytes(k, bytes) { const iv = crypto.getRandomValues(new Uint8Array(12)); return {iv: b64(iv), ct: b64(await crypto.subtle.encrypt({name: 'AES-GCM', iv}, k, bytes))}; }
+  async function openBytes(k, box) { return new Uint8Array(await crypto.subtle.decrypt({name: 'AES-GCM', iv: unb64(box.iv)}, k, unb64(box.ct))); }
+  const MIME = {pdf: 'application/pdf', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png'};
+  const docKeys = () => kv('readonly', s => s.getAllKeys()).then(ks => ks.filter(k => typeof k === 'string' && k.startsWith('doc:')).map(k => k.slice(4)));
+  const docApi = {
+    list(filter = {}) { return Object.entries(data?.docs || {}).map(([id, d]) => ({id, ...d})).filter(d => Object.entries(filter).every(([k, v]) => d[k] === v)); },
+    async add(file, info = {}) {
+      const bytes = new Uint8Array(await file.arrayBuffer()), id = uid(), ext = (file.name.split('.').pop() || '').toLowerCase();
+      await kvSet('doc:' + id, await sealBytes(key, bytes));
+      (data.docs ??= {})[id] = {...info, name: file.name, type: file.type || MIME[ext] || 'application/octet-stream', size: bytes.length, date: new Date().toISOString()};
+      save(); return id;
+    },
+    async available(id) { return !!(await kvGet('doc:' + id)); },
+    async blob(id) { const box = await kvGet('doc:' + id); if (!box) return null; return new Blob([await openBytes(key, box)], {type: data.docs?.[id]?.type || 'application/octet-stream'}); },
+    async remove(id) { if (data.docs) delete data.docs[id]; await kv('readwrite', s => s.delete('doc:' + id)); save(); }
+  };
+  // Accès bruts (déjà chiffrés) pour la synchronisation et la sauvegarde
+  const docBox = id => kvGet('doc:' + id), putDocBox = (id, box) => kvSet('doc:' + id, box), delDocBox = id => kv('readwrite', s => s.delete('doc:' + id));
+  async function docBoxes() { const out = {}; for (const id of await docKeys()) out[id] = await docBox(id); return out; }
 
   function save() {
     clearTimeout(saveTimer);
@@ -173,7 +197,8 @@ const App = (() => {
     const dataBox = await seal(newKey, data);
     const vaultBox = await seal(newVk, vaultData);
     const oldPhotos = await kvGet('photos'), photosBox = oldPhotos ? await seal(newKey, await open(k, oldPhotos)) : null;
-    await kv('readwrite', s => { s.put(newMeta, 'meta'); s.put(dataBox, 'data'); s.put(vaultBox, 'vault'); if (photosBox) s.put(photosBox, 'photos'); });
+    const docs = {}; for (const id of await docKeys()) docs[id] = await sealBytes(newKey, await openBytes(k, await docBox(id)));
+    await kv('readwrite', s => { s.put(newMeta, 'meta'); s.put(dataBox, 'data'); s.put(vaultBox, 'vault'); if (photosBox) s.put(photosBox, 'photos'); for (const [id, b] of Object.entries(docs)) s.put(b, 'doc:' + id); });
     meta = newMeta; key = newKey; vault.forget(); emit('saved');
   }
 
@@ -357,6 +382,7 @@ const App = (() => {
     refreshNav: () => renderNav(),
     get vault() { return vault; },
     photos: photoApi,
+    docs: docApi,
     get meta() { return meta; },
     changePassword, lock,
     get skills() { return skills; }, isEnabled
@@ -401,6 +427,6 @@ const App = (() => {
     await kv('readwrite', s => { s.clear(); for (const [k, v] of Object.entries(records)) s.put(v, k); });
   }
 
-  return {VERSION, start, registerSkill, api, kvGet, kvSet, kvClear, replaceAll, deriveKey, open, unb64, on, getBoxes, adoptRemote,
+  return {VERSION, start, registerSkill, api, kvGet, kvSet, kvClear, replaceAll, deriveKey, open, unb64, on, getBoxes, adoptRemote, docKeys, docBox, putDocBox, delDocBox, docBoxes,
           get meta() { return meta; }, set meta(m) { meta = m; }, renderLock};
 })();
