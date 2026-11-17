@@ -447,6 +447,11 @@ App.circo = (() => {
     };
     const rowOf = q => rows.find(r => r.p.id === q.id) || {p: q, e: entry(c, q)};
     const jauneOf = r => { const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut); return sigList(c, r.p, r.e, ps, ev).some(x => SIG_JAUNE.includes(x)); };
+    // Un bloc par frère (avec son épouse sur la 2e ligne du même bloc) ou par pionnier
+    const blocksOf = (l, nomme) => l.map((r, bi) => {
+      const sp = nomme ? spouseOf(r.p) : null;
+      return {name: nm(r.p), d: detail(r, nomme), bi, hi: jauneOf(r), pid: r.p.id, sub: sp ? {name: `Épouse : ${sp.prenom || ''}`, d: activite(rowOf(sp)).join(' · '), pid: sp.id} : null};
+    });
     const linesOf = (l, nomme) => l.flatMap((r, bi) => {
       const out = [{name: nm(r.p), d: detail(r, nomme), bi, hi: jauneOf(r), pid: r.p.id}];
       const sp = nomme ? spouseOf(r.p) : null;
@@ -464,18 +469,19 @@ App.circo = (() => {
     const sigOrder = Object.keys(sigGroups).sort((a, b) => ((ORDRE.indexOf(a) + 1) || 99) - ((ORDRE.indexOf(b) + 1) || 99));
     const ir = rows.filter(r => r.e.ir > 0).sort((a, b) => b.e.ir - a.e.ir || nm(a.p).localeCompare(nm(b.p), 'fr'));
 
-    async function build(k) {
+    async function build(k, paging = false) {
       const doc = await PDFDocument.create(); doc.setTitle(`Bilan ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
       const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
       const W = 841.89, H = 595.28, M = 26, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
       const jaune2 = rgb(1, .91, .4), jaune = rgb(1, .97, .78), ciel = rgb(.86, .93, .99), orange = rgb(1, .92, .82), red = rgb(.78, .1, .1);
-      const page = doc.addPage([W, H]); let y = H - M, over = false;
+      let page = doc.addPage([W, H]), y = H - M, over = false;
       const S = v => v * k;
-      const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(8.5), font: o.bold ? B : R, color: o.color || ink});
+      const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(9.5), font: o.bold ? B : R, color: o.color || ink});
       const fit = (t, f, size, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
-      const need = h => { if (y - h < M + 10) over = true; };
-      const section = t => { y -= S(4); txt(t, M, y - S(10), {bold: true, size: S(10.5), color: blue}); y -= S(14); page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .7, color: blue}); y -= S(6); };
-      page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
+      const footer = () => page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
+      const need = h => { if (y - h < M + 10) { if (paging) { page = doc.addPage([W, H]); y = H - M; footer(); } else over = true; } };
+      const section = t => { y -= S(4); txt(t, M, y - S(11), {bold: true, size: S(12), color: blue}); y -= S(16); page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .7, color: blue}); y -= S(6); };
+      footer();
 
       const x0 = particul(asm), tags = [x0.aum ? `Assemblée référente aumônerie en prison${x0.lieu ? ' (' + x0.lieu + ')' : ''}` : '', ...x0.groupes].filter(Boolean).join(' · ');
       txt(`Bilan du cycle ${c.code} — ${asm}`, M, y - S(15), {bold: true, size: S(16)});
@@ -490,60 +496,67 @@ App.circo = (() => {
       const rowsIt = [items.slice(0, mainN), items.slice(mainN)].filter(r => r.length);
       const cols = Math.max(...rowsIt.map(r => r.length)), gap = 4, bw = (W - 2 * M - gap * (cols - 1)) / cols;
       const wrap = (t, w, size) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (R.widthOfTextAtSize(nx, size) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
-      for (const it of items) { it.labL = wrap(it.lab, bw - 8, S(7)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, S(6.5))); }
+      for (const it of items) { it.labL = wrap(it.lab, bw - 8, S(8)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, S(7.5))); }
       for (const rowIt of rowsIt) {
-        const bh = S(4) + S(8) * Math.max(...rowIt.map(s => s.labL.length)) + S(15) + S(7.5) * Math.max(0, ...rowIt.map(s => s.subL.length)) + S(3);
+        const bh = S(5) + S(9.2) * Math.max(...rowIt.map(s => s.labL.length)) + S(18) + S(8.6) * Math.max(0, ...rowIt.map(s => s.subL.length)) + S(4);
         need(bh + gap);
         rowIt.forEach((s, j) => {
           const bx = M + j * (bw + gap);
           page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7, color: s.bg === 'ciel' ? ciel : s.bg === 'orange' ? orange : s.red ? jaune : rgb(1, 1, 1)});
           let yy = y - S(10);
-          s.labL.forEach((l, li) => txt(l, bx + 4, yy - li * S(8), {size: S(7), color: mute}));
-          yy -= S(8) * Math.max(...rowIt.map(x => x.labL.length));   // chiffres alignés sur la même ligne
-          txt(s.v, bx + (bw - B.widthOfTextAtSize(T(s.v), S(13))) / 2, yy - S(8), {bold: true, size: S(13), color: s.red ? red : ink}); yy -= S(17);
-          s.subL.forEach(l => { txt(l, bx + 4, yy, {size: S(6.5), color: mute}); yy -= S(7.5); });
+          s.labL.forEach((l, li) => txt(l, bx + 4, yy - li * S(9.2), {size: S(8), color: mute}));
+          yy -= S(9.2) * Math.max(...rowIt.map(x => x.labL.length));   // chiffres alignés sur la même ligne
+          txt(s.v, bx + (bw - B.widthOfTextAtSize(T(s.v), S(15))) / 2, yy - S(10), {bold: true, size: S(15), color: s.red ? red : ink}); yy -= S(20);
+          s.subL.forEach(l => { txt(l, bx + 4, yy, {size: S(7.5), color: mute}); yy -= S(8.6); });
         });
         y -= bh + gap;
       }
 
       // Frères nommés et pionniers : 4 colonnes
       section('Frères nommés et pionniers');
-      const cw = (W - 2 * M - 3 * 10) / 4, lh = S(9.6), fs = S(7.8), fd = S(6.8);
-      groups.forEach(([t, l], gi) => txt(`${t} (${l.length})`, M + gi * (cw + 10), y - S(9), {bold: true, size: S(8.6)}));
+      const cw = (W - 2 * M - 3 * 10) / 4, lh = S(11.5), fs = S(9.5), fd = S(8.3);
+      groups.forEach(([t, l], gi) => txt(`${t} (${l.length})`, M + gi * (cw + 10), y - S(10), {bold: true, size: S(10)}));
       y -= S(13);
-      const cols4 = groups.map(([, l, nomme]) => linesOf(l, nomme));
-      // Photos (trombinoscope) à gauche des noms, si l'annuaire en contient pour ces personnes
-      const withPhoto = cols4.flat().some(ln => api.photos.get(ln.pid));
-      const lhN = withPhoto ? S(19) : lh, phS = lhN - S(1.5), imgs = {};
+      const cols4 = groups.map(([, l, nomme]) => blocksOf(l, nomme));
+      // Photos (trombinoscope) alignées à gauche ; le frère et son épouse partagent le même bloc
+      const all = cols4.flat(), withPhoto = all.some(bk => api.photos.get(bk.pid) || (bk.sub && api.photos.get(bk.sub.pid)));
+      const twoPh = withPhoto && all.some(bk => bk.sub && api.photos.get(bk.sub.pid));
+      const phS = S(24), imgs = {};
       const photoOf = async pid => { const src = api.photos.get(pid); if (!src) return null; return imgs[pid] ??= await doc.embedJpg(Uint8Array.from(atob(src.split(',')[1]), ch => ch.charCodeAt(0))); };
+      const hOf = bk => !bk ? 0 : withPhoto ? Math.max(phS, bk.sub ? S(23) : 0) + S(3) : (bk.sub ? S(22) : lh);
       const maxN = Math.max(1, ...cols4.map(l => l.length));
-      need(maxN * lhN);
+      const rowH = kk => Math.max(...cols4.map(l => hOf(l[kk])));
+      if (!paging) { let tot = 0; for (let kk = 0; kk < maxN; kk++) tot += rowH(kk); need(tot); }
       for (let kk = 0; kk < maxN; kk++) {
-        for (let gi = 0; gi < cols4.length; gi++) { const ln = cols4[gi][kk]; if (!ln) continue;
-          if (ln.hi) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lhN - S(1), width: cw + 4, height: lhN, color: jaune2});
-          else if (ln.bi % 2 === 0) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lhN - S(1), width: cw + 4, height: lhN, color: ciel});
-          let cx = M + gi * (cw + 10) + (ln.sub ? S(9) : 0), wmax = cw - (ln.sub ? S(9) : 0);
+        const hR = rowH(kk); if (paging) need(hR);
+        for (let gi = 0; gi < cols4.length; gi++) { const bk = cols4[gi][kk]; if (!bk) continue;
+          const x0 = M + gi * (cw + 10);
+          if (bk.hi) page.drawRectangle({x: x0 - 2, y: y - hR, width: cw + 4, height: hR, color: jaune2});
+          else if (bk.bi % 2 === 0) page.drawRectangle({x: x0 - 2, y: y - hR, width: cw + 4, height: hR, color: ciel});
+          let tx = x0;
           if (withPhoto) {
-            const im = await photoOf(ln.pid);
-            if (im) page.drawImage(im, {x: cx, y: y - lhN, width: phS, height: phS});
-            cx += phS + S(3); wmax -= phS + S(3);
+            const im = await photoOf(bk.pid); if (im) page.drawImage(im, {x: x0, y: y - phS - S(1.5), width: phS, height: phS});
+            if (twoPh) { const im2 = bk.sub ? await photoOf(bk.sub.pid) : null; if (im2) page.drawImage(im2, {x: x0 + phS + S(2), y: y - phS - S(1.5), width: phS, height: phS}); }
+            tx = x0 + (twoPh ? 2 * phS + S(6) : phS + S(4));
           }
-          const yb = withPhoto ? y - lhN / 2 - S(2.2) : y - S(8);
-          const f1 = ln.sub ? R : B, s1 = ln.sub ? fd : fs;
-          const n1 = fit(ln.name, f1, s1, wmax * .58), w1 = f1.widthOfTextAtSize(n1, s1);
-          txt(n1, cx, yb, {size: s1, bold: !ln.sub, color: ln.sub ? mute : ink});
-          if (ln.d) txt(fit(ln.d, R, fd, wmax - w1 - 5), cx + w1 + 4, yb, {size: fd, color: mute}); }
-        y -= lhN;
+          const wmax = cw - (tx - x0);
+          const line = (t, d, yb, bold) => { const f1 = bold ? B : R, s1 = bold ? fs : fd; const n1 = fit(t, f1, s1, d ? wmax * .6 : wmax), w1 = f1.widthOfTextAtSize(n1, s1);
+            txt(n1, tx, yb, {size: s1, bold, color: bold ? ink : mute}); if (d) txt(fit(d, R, fd, wmax - w1 - 5), tx + w1 + 4, yb, {size: fd, color: mute}); };
+          if (bk.sub) { line(bk.name, bk.d, y - S(10), true); line(bk.sub.name, bk.sub.d, y - S(20), false); }
+          else line(bk.name, bk.d, withPhoto ? y - hR / 2 - S(3) : y - S(9), true);
+        }
+        y -= hR;
       }
 
       // Irréguliers : colonnes
       section(`Proclamateurs irréguliers (IR) — ${ir.length}`);
-      if (!ir.length) { txt('Aucun', M, y - S(8), {color: mute, size: S(8)}); y -= lh; }
+      if (!ir.length) { txt('Aucun', M, y - S(9), {color: mute, size: S(9)}); y -= lh; }
       const icol = 5, iw = (W - 2 * M) / icol, per = Math.ceil(ir.length / icol);
-      need(per * lh);
+      if (!paging) need(per * lh);
       for (let kk = 0; kk < per; kk++) {
+        if (paging) need(lh);
         for (let j = 0; j < icol; j++) { const r = ir[j * per + kk]; if (!r) continue; const cx = M + j * iw, tail = `${r.e.ir}×${r.e.statut === 'PNB' ? ' PNB' : ''}`;
-          txt(fit(nm(r.p), R, fs, iw - S(34)), cx, y - S(8), {size: fs}); txt(tail, cx + iw - S(30), y - S(8), {size: fd, color: mute}); }
+          txt(fit(nm(r.p), R, fs, iw - S(38)), cx, y - S(9), {size: fs}); txt(tail, cx + iw - S(34), y - S(9), {size: fd, color: mute}); }
         y -= lh;
       }
       // Signalements
@@ -557,14 +570,16 @@ App.circo = (() => {
           if (cur) out.push(cur);
           need(out.length * lh);
           if (SIG_JAUNE.includes(m)) page.drawRectangle({x: M - 2, y: y - out.length * lh - S(1), width: lw + Math.max(...out.map(l => R.widthOfTextAtSize(T(l), fs))) + 6, height: out.length * lh, color: jaune2});
-          txt(lab, M, y - S(8), {bold: true, size: fs, color: m === 'AE' || m === 'Radié' ? rgb(.78, .1, .1) : ink});
-          out.forEach((l, i) => { txt(l, M + lw, y - S(8), {size: fs}); y -= lh; });
+          txt(lab, M, y - S(9), {bold: true, size: fs, color: m === 'AE' || m === 'Radié' ? rgb(.78, .1, .1) : ink});
+          out.forEach((l, i) => { txt(l, M + lw, y - S(9), {size: fs}); y -= lh; });
         }
       }
       return {doc, over};
     }
     let res;
-    for (const k of [1, .93, .86, .8, .74, .68, .62, .56, .5]) { res = await build(k); if (!res.over) break; }
+    // Une page si possible sans descendre sous une taille lisible ; sinon le bilan continue sur une 2e page
+    for (const k of [1, .94, .88]) { res = await build(k); if (!res.over) break; }
+    if (res.over) res = await build(.88, true);
     return new Blob([await res.doc.save()], {type: 'application/pdf'});
   }
   function assembleeView(el, name) {
