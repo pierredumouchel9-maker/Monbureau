@@ -459,7 +459,7 @@ App.circo = (() => {
       return out;
     });
     // Signalements : lignes surlignées et évolutions depuis le cycle précédent, regroupées par motif
-    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Démission', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'De nouveau actif', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
+    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Blâme', 'Démission', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'De nouveau actif', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
     const sigGroups = {};
     for (const r of allRows) {
       const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut);
@@ -649,8 +649,8 @@ App.circo = (() => {
   }
   // Ligne à surligner : nouveau PNB, baptême, nouveau PP, nouveau PAP, proposition comme ancien ou assistant
   const SIGNALS = ['Nouveau PNB', 'Baptême', 'Nouveau PP', 'Nouveau PAP', 'Proposition ancien', 'Proposition assistant'];
-  const SIG_ONLY = ['Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Sans raison'];
-  const SIG_JAUNE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Démission'];   // surlignés en jaune dans le bilan PDF
+  const SIG_ONLY = ['Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Blâme', 'Sans raison'];
+  const SIG_JAUNE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Blâme', 'Démission'];   // surlignés en jaune dans le bilan PDF
   const SIG_LABEL = x => x === 'Sans raison' ? 'Surligner sans raison' : x;
   const hasAE = t => /(^|[^A-Za-zÀ-ÿ])AE([^A-Za-zÀ-ÿ]|$)/.test(t || '');
   // Texte du suivi avec « AE » en gras rouge surligné
