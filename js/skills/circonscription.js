@@ -397,7 +397,7 @@ App.circo = (() => {
     const detail = (r, nomme) => {
       const bits = [];
       if (r.p.resp?.length) bits.push(r.p.resp.join(', '));
-      if (!nomme && fct(r.p) && fct(r.p) !== 'Radié') bits.push(fct(r.p));
+      if (!nomme && fct(r.p) && !['Radié', 'Démission'].includes(fct(r.p))) bits.push(fct(r.p));
       if (nomme) bits.push(...activite(r));
       else { if (heures(r)) bits.push(heures(r)); if (eb(r)) bits.push(`${eb(r)} EB`); }
       return bits.join(' · ');
@@ -411,7 +411,7 @@ App.circo = (() => {
       return out;
     });
     // Signalements : lignes surlignées et évolutions depuis le cycle précédent, regroupées par motif
-    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'De nouveau actif', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
+    const ORDRE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Démission', 'Baptême', 'Nouveau PNB', 'Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'AE', 'Radié', 'De nouveau actif', 'Nouvelle IN', 'Emménagement', 'Nouveau dans la liste', 'Déménagement', 'Décédé(e)', 'Surligné'];
     const sigGroups = {};
     for (const r of allRows) {
       const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut);
@@ -580,7 +580,7 @@ App.circo = (() => {
   // Ligne à surligner : nouveau PNB, baptême, nouveau PP, nouveau PAP, proposition comme ancien ou assistant
   const SIGNALS = ['Nouveau PNB', 'Baptême', 'Nouveau PP', 'Nouveau PAP', 'Proposition ancien', 'Proposition assistant'];
   const SIG_ONLY = ['Nouveau PP', 'Nouveau PAP', 'Nouveau PS', 'Arrêt PP', 'Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Sans raison'];
-  const SIG_JAUNE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions'];   // surlignés en jaune dans le bilan PDF
+  const SIG_JAUNE = ['Proposition ancien', 'Proposition assistant', 'Sous restrictions', 'Démission'];   // surlignés en jaune dans le bilan PDF
   const SIG_LABEL = x => x === 'Sans raison' ? 'Surligner sans raison' : x;
   const hasAE = t => /(^|[^A-Za-zÀ-ÿ])AE([^A-Za-zÀ-ÿ]|$)/.test(t || '');
   // Texte du suivi avec « AE » en gras rouge surligné
@@ -599,6 +599,8 @@ App.circo = (() => {
     const a = autoSignal(ps, e.statut, ev); if (a) out.push(a);
     if (hasAE(suiviOf(c, p, e).txt)) out.push('AE');
     if (radieDepuis(c, p) === c.code) out.push('Radié');
+    // Démission d'un ancien ou d'un assistant : signalée le cycle où elle est notée
+    { const pc = prevCycle(c), fp = pc ? fonctionAt(pc, p) : undefined; if (fonctionAt(c, p) === 'Démission' && fp !== undefined && fp !== 'Démission') out.push('Démission'); }
     return out.filter((x, i, l) => l.indexOf(x) === i);
   }
   function autoSignal(prevSt, st, evt) {
@@ -898,7 +900,7 @@ App.circo = (() => {
             if (ps !== undefined && ps !== (e.statut || '')) return `<div class="small" style="opacity:.75">${prevCycle(c).code} : ${ps || 'Proclamateur'}</div>`;
             return '';
           })()}
-            <div class="fct-box"><select data-f="fonction" style="width:auto;padding:4px 6px"><option value="">Fonction : —</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Ancien' ? 'selected' : ''}>Ancien</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Assistant' ? 'selected' : ''}>Assistant</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Radié' ? 'selected' : ''}>Radié</option></select>
+            <div class="fct-box"><select data-f="fonction" style="width:auto;padding:4px 6px"><option value="">Fonction : —</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Ancien' ? 'selected' : ''}>Ancien</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Assistant' ? 'selected' : ''}>Assistant</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Démission' ? 'selected' : ''}>Démission</option><option ${(fonctionAt(c, p) ?? p.fonction) === 'Radié' ? 'selected' : ''}>Radié</option></select>
             ${['Ancien', 'Assistant'].includes(fonctionAt(c, p) ?? p.fonction) ? (() => { const sp = spouseOf(p), auto = !p.epouse && sp;
               const cands = [...new Set([...spouseCandidates(p), ...people.filter(q => q.id !== p.id && q.civilite === 'Sœur')])];
               return `<div style="margin-top:4px"><select data-f="epouse" title="Épouse" style="width:auto;max-width:190px;padding:2px 4px;font-size:12px">
