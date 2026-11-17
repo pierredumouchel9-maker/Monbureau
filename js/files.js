@@ -444,6 +444,65 @@ App.files = (() => {
     throw new Error('Format non pris en charge (utilisez .xlsx, .xlsm, .csv ou .pdf).');
   }
 
+  /* ---------- Mise en page d'un document (organigrammes) ----------
+     Renvoie des pages de « cellules » positionnées : {x, y, w, h, text}, y croissant vers le bas.
+     PDF : morceaux de texte regroupés par ligne ; Excel : une cellule = une case de la grille ;
+     Word : paragraphes et cases de tableaux. */
+  async function readLayout(file) {
+    const name = file.name || '';
+    if (/\.pdf$/i.test(name) || file.type === 'application/pdf') {
+      const base = document.baseURI;
+      const pdfjs = await import(new URL('lib/pdfjs/pdf.min.mjs', base).href);
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL('lib/pdfjs/pdf.worker.min.mjs', base).href;
+      const doc = await pdfjs.getDocument({data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false}).promise;
+      const pages = [];
+      for (let n = 1; n <= doc.numPages; n++) {
+        const page = await doc.getPage(n), H = page.getViewport({scale: 1}).height;
+        const items = (await page.getTextContent()).items.filter(i => i.str && i.str.trim())
+          .map(i => ({x: i.transform[4], y: H - i.transform[5], w: i.width, h: Math.abs(i.transform[3]) || 10, str: i.str}));
+        items.sort((a, b) => a.y - b.y || a.x - b.x);
+        // texte doublé (faux gras : même texte réécrit décalé d'un point)
+        for (let i = items.length - 1; i > 0; i--) if (items.slice(Math.max(0, i - 6), i).some(o => o.str === items[i].str && Math.abs(o.x - items[i].x) < 2.5 && Math.abs(o.y - items[i].y) < 2.5)) items.splice(i, 1);
+        const lines = [];
+        for (const it of items) { const l = lines.find(l => Math.abs(l.y - it.y) <= Math.max(2, it.h * 0.35)); l ? l.items.push(it) : lines.push({y: it.y, items: [it]}); }
+        const cells = [];
+        for (const l of lines) {
+          l.items.sort((a, b) => a.x - b.x); let c = null;
+          for (const it of l.items) {
+            const gap = c ? it.x - (c.x + c.w) : Infinity;
+            if (c && (gap < it.h * 0.5 || (/^[\s:;,.)]+$/.test(it.str) && gap < it.h * 1.5))) { c.text += (gap > it.h * 0.12 && !/\s$/.test(c.text) ? ' ' : '') + it.str; c.w = it.x + it.w - c.x; c.h = Math.max(c.h, it.h); }
+            else { c = {x: it.x, y: l.y, w: it.w, h: it.h, text: it.str}; cells.push(c); }
+          }
+        }
+        for (const c of cells) c.text = c.text.replace(/\s+/g, ' ').trim();
+        pages.push(cells.filter(c => /[A-Za-zÀ-ÿ]/.test(c.text))); page.cleanup();
+      }
+      return pages;
+    }
+    if (/\.xls[xm]$/i.test(name)) {
+      return (await readXlsx(file)).map(sh => sh.rows.flatMap((r, ri) => r.map((v, ci) => ({x: ci * 100, y: ri * 20, w: 95, h: 12, text: String(v ?? '').replace(/\s+/g, ' ').trim()})).filter(c => c.text)));
+    }
+    if (/\.docx$/i.test(name)) {
+      const z = await unzip(await file.arrayBuffer()), d = xml(await z.text('word/document.xml'));
+      const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+      const txt = n => [...n.getElementsByTagNameNS(W, 't')].map(t => t.textContent).join('').replace(/\s+/g, ' ').trim();
+      const body = d.getElementsByTagNameNS(W, 'body')[0], cells = []; let y = 0;
+      for (const node of body ? [...body.children] : []) {
+        if (node.localName === 'p') { for (const part of txt(node).split(/\t+/)) if (part) cells.push({x: 0, y, w: 400, h: 12, text: part}); y += 20; }
+        else if (node.localName === 'tbl') {
+          for (const tr of [...node.children].filter(n => n.localName === 'tr')) {
+            const tcs = [...tr.children].filter(n => n.localName === 'tc'); let maxLines = 1;
+            tcs.forEach((tc, ci) => { const paras = [...tc.children].filter(n => n.localName === 'p').map(txt).filter(Boolean); maxLines = Math.max(maxLines, paras.length);
+              paras.forEach((t, li) => cells.push({x: ci * 150, y: y + li * 20, w: 140, h: 12, text: t})); });
+            y += maxLines * 20 + 10;
+          }
+        }
+      }
+      return [cells];
+    }
+    throw new Error('Format non pris en charge pour la lecture (PDF, Excel .xlsx ou Word .docx).');
+  }
+
   /* ---------- Écriture ZIP (sans compression) ---------- */
   const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
   const crc32 = u8 => { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
@@ -468,5 +527,5 @@ App.files = (() => {
     return new Blob([...parts, ...central, new Uint8Array(end.buffer)], {type: 'application/zip'});
   }
 
-  return {readTable, readXlsx, readCsv, readPdf, zip, unzip};
+  return {readTable, readXlsx, readCsv, readPdf, readLayout, zip, unzip};
 })();

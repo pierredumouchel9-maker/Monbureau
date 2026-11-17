@@ -369,7 +369,7 @@ App.circo = (() => {
       return `<div class="row" style="gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line, #e5e5e5)">
         <div style="min-width:190px"><strong>${kd.l}</strong></div>
         ${d ? `<div style="flex:1;min-width:0">${docIcon(d)} <span title="${api.esc(d.name)}">${api.esc(d.name)}</span> <span class="small muted">· ${kSize(d.size)} · importé le ${api.dateCourte(d.date)}</span> <span class="small muted" data-docwait="${d.id}"></span></div>
-          <button class="btn" data-docopen="${d.id}">Ouvrir</button><button class="btn" data-docadd="${kd.k}">Remplacer</button><button class="btn" data-docdel="${d.id}" title="Retirer ce document">✕</button>`
+          <button class="btn" data-docopen="${d.id}">Ouvrir</button>${kd.k === 'organigramme' ? `<button class="btn primary" data-docread="${d.id}">Lire les responsabilités</button>` : ''}<button class="btn" data-docadd="${kd.k}">Remplacer</button><button class="btn" data-docdel="${d.id}" title="Retirer ce document">✕</button>`
           : `<div style="flex:1" class="small muted">Aucun document</div><button class="btn" data-docadd="${kd.k}">Ajouter (PDF, Excel, Word)</button>`}
       </div>`;
     };
@@ -400,7 +400,91 @@ App.circo = (() => {
       if (!(await api.confirm('Retirer le document', `Retirer « ${d.name} » de ${name} ?`, 'Retirer', true))) return;
       await api.docs.remove(d.id); redraw();
     });
+    for (const b of api.$$('[data-docread]', el)) b.addEventListener('click', () => readOrganigramme(name, b.dataset.docread, redraw));
     for (const s of api.$$('[data-docwait]', el)) api.docs.available(s.dataset.docwait).then(ok => { if (!ok) s.textContent = '· en attente de synchronisation'; });
+  }
+
+  // Organigramme : le Comité de service et les services que chacun supervise
+  const SUPERVISION = [
+    {chef: 'CCA', titre: 'Coordinateur du collège des anciens', services: [['Accueil', 'Préposés à l’accueil'], ['Discours publics', 'Programme des discours publics'], ['Audio/vidéo', 'Équipe audio-vidéo']],
+      aussi: 'Présidents du discours public et lecteurs de La Tour de Garde · communications à l’assemblée · audits des comptes'},
+    {chef: 'Secrétaire', titre: 'Secrétaire', services: [['Comptes', 'Préposé aux comptes']], aussi: 'Questions liées aux assemblées régionales'},
+    {chef: 'Resp. Prédication', titre: 'Responsable de la prédication', services: [['Publications', 'Préposé aux publications'], ['Territoires', 'Préposé aux territoires']], aussi: ''}];
+  const AUTRES_RESP = ['TG', 'VCM', 'Conseiller adj.', 'Aumônier', 'CLH', 'Comité de gestion', 'Entretien', 'LDC', 'Télévolontaire'];
+  function organi(asm) {
+    const mem = members(asm).filter(p => !['Radié', 'Démission'].includes(p.fonction));
+    const who = r => ({main: mem.filter(p => (p.resp || []).includes(r)), adj: mem.filter(p => (p.resp || []).includes(r + ' adj.'))});
+    const blocks = SUPERVISION.map(b => ({...b, chefs: who(b.chef), svc: b.services.map(([r, l]) => ({r, l, ...who(r)}))}));
+    const autres = AUTRES_RESP.map(r => ({r, ...who(r)})).filter(x => x.main.length || x.adj.length);
+    const manque = [...blocks.filter(b => !b.chefs.main.length).map(b => b.titre), ...blocks.flatMap(b => b.svc.filter(x => !x.main.length).map(x => x.l))];
+    const doublons = [...blocks.filter(b => b.chefs.main.length > 1).map(b => b.titre), ...['TG', 'VCM'].filter(r => who(r).main.length > 1)];
+    return {blocks, autres, manque, doublons, any: mem.some(p => (p.resp || []).length)};
+  }
+  function organiCard(name) {
+    const o = organi(name), fn = p => `${api.esc(p.prenom || '')} ${api.esc((p.nom || '').toUpperCase())}`;
+    const who = x => [...x.main.map(fn), ...x.adj.map(p => `<span class="muted">${fn(p)} (adj.)</span>`)].join(', ') || '<span style="color:var(--danger,#c00)">à pourvoir</span>';
+    if (!o.any) return `<div class="card" style="margin-bottom:16px"><strong>Organigramme — Comité de service</strong>
+      <p class="small muted" style="margin:6px 0 0">Aucune responsabilité notée pour cette assemblée. Importez l’organigramme ci-dessus puis « Lire les responsabilités », ou ajoutez-les dans l’étude des proclamateurs.</p></div>`;
+    return `<div class="card" style="margin-bottom:16px"><strong>Organigramme — Comité de service</strong>
+      ${o.manque.length ? `<div class="notice warn small" style="margin-top:8px">À pourvoir ou non renseigné : <strong>${o.manque.map(api.esc).join(', ')}</strong></div>` : '<div class="small" style="margin-top:6px;color:#1d5a35">✓ Comité de service et services supervisés tous renseignés</div>'}
+      ${o.doublons.length ? `<div class="notice danger small" style="margin-top:6px">Plusieurs frères notés comme : <strong>${o.doublons.map(api.esc).join(', ')}</strong> (vérifiez)</div>` : ''}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:10px">
+      ${o.blocks.map(b => `<div style="border:1px solid var(--line,#e2e4e8);border-radius:8px;padding:8px 10px;background:#f7fafd">
+        <div class="small muted">${api.esc(b.titre)}</div><div style="font-weight:600;margin-bottom:6px">${who(b.chefs)}</div>
+        <div class="small" style="margin-bottom:2px">Supervise :</div>
+        <ul class="small" style="margin:0 0 4px 16px;padding:0">${b.svc.map(x => `<li><span class="muted">${api.esc(x.l)} :</span> ${who(x)}</li>`).join('')}</ul>
+        ${b.aussi ? `<div class="small muted">Aussi : ${api.esc(b.aussi)}</div>` : ''}</div>`).join('')}
+      </div>
+      ${o.autres.length ? `<div class="small" style="margin-top:8px"><span class="muted">Autres responsabilités :</span> ${o.autres.map(x => `<strong>${api.esc(x.r)}</strong> ${who(x)}`).join(' · ')}</div>` : ''}</div>`;
+  }
+
+  // Lecture d'un organigramme : propose les responsabilités trouvées, à valider frère par frère
+  async function readOrganigramme(name, docId, redraw) {
+    const d = api.docs.list().find(x => x.id === docId); if (!d) return;
+    let res, freres;
+    try {
+      const blob = await api.docs.blob(docId); if (!blob) return api.toast('Document pas encore reçu sur cet appareil : synchronisez puis réessayez.', 'error');
+      if (/\.(xls|doc)$/i.test(d.name)) return api.toast('Ancien format Excel/Word (.xls/.doc) : enregistrez-le en .xlsx ou .docx, ou en PDF.', 'error');
+      freres = members(name).filter(p => p.civilite !== 'Sœur');
+      if (!freres.length) return api.toast(`Aucun frère de ${name} dans l’annuaire : importez d’abord la liste de l’assemblée.`, 'error');
+      res = App.organigramme.parse(await App.files.readLayout(new File([blob], d.name, {type: d.type})), freres);
+    } catch (e) { return api.toast('Lecture impossible : ' + e.message, 'error'); }
+    const ROLESET = new Set(App.organigramme.ROLES.flatMap(r => [r, r + ' adj.']));
+    const found = new Map(res.result.map(r => [r.pid, r.roles]));
+    const fullName = p => `${p.prenom || ''} ${(p.nom || '').toUpperCase()}`.trim();
+    const rows = freres.filter(p => found.has(p.id) || (p.resp || []).some(r => ROLESET.has(r)))
+      .sort((a, b) => (found.has(b.id) - found.has(a.id)) || String(a.nom).localeCompare(String(b.nom), 'fr'));
+    let nNew = 0;
+    const html = rows.map(p => {
+      const cur = p.resp || [], f = found.get(p.id) || [];
+      const add = f.filter(r => !cur.includes(r)), keep = f.filter(r => cur.includes(r));
+      // à retirer : absentes de l'organigramme (une « adj. » remplacée par la responsabilité principale part toute seule)
+      const gone = cur.filter(r => ROLESET.has(r) && !f.includes(r) && !(r.endsWith(' adj.') && f.includes(r.slice(0, -5))));
+      nNew += add.length;
+      return `<tr data-pid="${p.id}"><td style="white-space:nowrap"><strong>${api.esc(fullName(p))}</strong>${p.fonction ? `<div class="small muted">${api.esc(p.fonction)}</div>` : ''}</td>
+        <td>${add.map(r => `<label class="pill" style="background:#e3f4ea;color:#1d5a35;border-color:#a9d5b8;margin:1px;cursor:pointer"><input type="checkbox" data-add="${api.esc(r)}" checked> ${api.esc(r)}</label>`).join('')}
+          ${keep.map(r => `<span class="pill" style="background:#fff;margin:1px" title="Déjà noté">${api.esc(r)} ✓</span>`).join('')}
+          ${!f.length ? '<span class="small muted">Absent de l’organigramme</span>' : ''}</td>
+        <td>${gone.map(r => `<label class="pill" style="background:#fdecec;color:#8a1f1f;border-color:#f0b4b4;margin:1px;cursor:pointer" title="Cocher pour retirer"><input type="checkbox" data-del="${api.esc(r)}" ${f.includes(r + ' adj.') ? 'checked' : ''}> ${api.esc(r)}${f.includes(r + ' adj.') ? ' (adjoint d’après l’organigramme)' : ''}</label>`).join('')}</td></tr>`;
+    }).join('');
+    const body = `<p class="small" style="margin-top:0">D’après <strong>${api.esc(d.name)}</strong>. En vert, les responsabilités à ajouter (décochez celles qui sont fausses). En rouge, celles notées dans l’application mais absentes de l’organigramme : cochez-les pour les retirer.</p>
+      ${res.warn.length ? `<div class="notice warn small">Plusieurs frères trouvés pour : <strong>${res.warn.map(api.esc).join(', ')}</strong>. Vérifiez avant de valider.</div>` : ''}
+      ${rows.length ? `<div class="table-wrap" style="max-height:55vh"><table class="list"><thead><tr><th>Frère</th><th>Dans l’organigramme</th><th>À retirer ?</th></tr></thead><tbody>${html}</tbody></table></div>`
+        : '<div class="notice">Aucune responsabilité reconnue. Le document est peut-être scanné (image) ou sa présentation est inhabituelle : envoyez-le pour adapter la lecture.</div>'}
+      ${res.unknown.length ? `<p class="small muted">Noms non retrouvés parmi les frères de ${api.esc(name)} : ${res.unknown.map(api.esc).join(', ')}. Vérifiez l’orthographe dans l’annuaire.</p>` : ''}`;
+    const ok = await api.modal({title: `Responsabilités — ${name}`, body, wide: true,
+      actions: [{label: 'Annuler', value: null}, ...(rows.length ? [{label: 'Valider', kind: 'primary', onClick: bodyEl => {
+        let n = 0;
+        for (const tr of api.$$('tr[data-pid]', bodyEl)) {
+          const p = api.data.persons.find(x => x.id === tr.dataset.pid); if (!p) continue;
+          const add = api.$$('input[data-add]:checked', tr).map(i => i.dataset.add), del = new Set(api.$$('input[data-del]:checked', tr).map(i => i.dataset.del));
+          if (!add.length && !del.size) continue;
+          p.resp = [...(p.resp || []).filter(r => !del.has(r) && !add.some(a => a === r + ' adj.' || r === a + ' adj.')), ...add];
+          n += add.length + del.size;
+        }
+        api.save(); return n;
+      }}] : [])]});
+    if (ok !== null && ok !== undefined) { api.toast(ok ? `${ok} modification${ok > 1 ? 's' : ''} enregistrée${ok > 1 ? 's' : ''}` : 'Aucune modification'); redraw(); }
   }
 
   // Trombinoscope d'une assemblée : A4 paysage, 8 × 3 vignettes par page (photo ou initiales, nom, fonction et statut)
@@ -484,7 +568,10 @@ App.circo = (() => {
       return b; };
     const detail = (r, nomme) => {
       const bits = [];
-      if (r.p.resp?.length) bits.push(r.p.resp.join(', '));
+      // bilan PDF : responsabilités principales seulement (les services comme accueil, comptes, audio/vidéo restent visibles dans le tableau)
+      const PDF_RESP = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Conseiller adj.', 'Resp. de groupe', 'Aumônier', 'CLH', 'LDC', 'Télévolontaire', 'Comité de gestion'];
+      const rp = (r.p.resp || []).filter(x => PDF_RESP.includes(x.replace(/ adj\.$/, '')));
+      if (rp.length) bits.push(rp.join(', '));
       if (!nomme && fct(r.p) && !['Radié', 'Démission'].includes(fct(r.p))) bits.push(fct(r.p));
       if (nomme) bits.push(...activite(r));
       else { if (heures(r)) bits.push(heures(r)); if (eb(r)) bits.push(`${eb(r)} EB`); }
@@ -595,6 +682,30 @@ App.circo = (() => {
       }
       y = y0 - totH;
 
+      // Organigramme : Comité de service et services supervisés
+      const og = organi(asm);
+      if (og.any) {
+        section('Organigramme — Comité de service');
+        const gap3 = 12, cw3 = (W - 2 * M - 2 * gap3) / 3, lo = S(10.5);
+        const names = x => [...x.main.map(nm), ...x.adj.map(p => nm(p) + ' (adj.)')].join(', ');
+        const cols3 = og.blocks.map(b => [{lab: b.titre + ' : ', d: names(b.chefs), bold: true, miss: !b.chefs.main.length}, ...b.svc.map(x => ({lab: '   ' + x.l + ' : ', d: names(x), miss: !x.main.length}))]);
+        const nL = Math.max(...cols3.map(l => l.length));
+        need(nL * lo + S(4));
+        cols3.forEach((l, j) => {
+          const cx = M + j * (cw3 + gap3); page.drawRectangle({x: cx - 2, y: y - nL * lo - S(3), width: cw3 + 4, height: nL * lo + S(3), color: ciel});
+          l.forEach((it, i) => { const f1 = it.bold ? B : R, s1 = it.bold ? fs : fd, lab = fit(it.lab, f1, s1, cw3 * .62), lw = f1.widthOfTextAtSize(lab, s1), yy = y - S(9) - i * lo;
+            txt(lab, cx, yy, {size: s1, bold: it.bold, color: it.bold ? ink : mute});
+            txt(fit(it.miss && !it.d ? 'à pourvoir' : it.d, R, s1, cw3 - lw - 2), cx + lw, yy, {size: s1, color: it.miss ? red : ink}); });
+        });
+        y -= nL * lo + S(6);
+        const lineWrap = (lab, body, color) => { const lw = B.widthOfTextAtSize(T(lab), fd), out = []; let cur = '';
+          for (const w of body.split(' ')) { const nx = cur ? cur + ' ' + w : w; if (R.widthOfTextAtSize(T(nx), fd) > W - 2 * M - lw && cur) { out.push(cur); cur = w; } else cur = nx; } if (cur) out.push(cur);
+          need(out.length * S(10.5)); txt(lab, M, y - S(8), {bold: true, size: fd, color}); out.forEach(l => { txt(l, M + lw, y - S(8), {size: fd, color}); y -= S(10.5); }); };
+        if (og.autres.length) lineWrap('Autres responsabilités : ', og.autres.map(x => `${x.r} : ${names(x)}`).join(' · '), ink);
+        if (og.manque.length) lineWrap('À pourvoir ou non renseigné : ', og.manque.join(', '), red);
+        if (og.doublons.length) lineWrap('À vérifier (plusieurs frères) : ', og.doublons.join(', '), red);
+      }
+
       // Irréguliers : colonnes
       section(`Proclamateurs irréguliers (IR) — ${ir.length}`);
       if (!ir.length) { txt('Aucun', M, y - S(9), {color: mute, size: S(9)}); y -= lh; }
@@ -639,6 +750,7 @@ App.circo = (() => {
       <div class="row"><button class="btn" id="fPdf">Fiche de préparation de visite (PDF)</button><button class="btn primary" id="fSave">Enregistrer la fiche</button></div></div>
       ${particulCard(name)}
       ${docsCard(name)}
+      ${organiCard(name)}
       <div class="grid" style="margin-bottom:16px">
         <div class="card"><div class="muted small">Dans l'annuaire</div><div class="stat">${mem.length}</div><div class="small muted">${anc} anciens · ${ass} assistants</div></div>
         ${last ? ['procl', 'pp', 'sem'].map(k => { const v = n(last.valeurs[name]?.[k]); const pv = prevCycle(last) ? n(prevCycle(last).valeurs[name]?.[k]) : null;
@@ -750,7 +862,8 @@ App.circo = (() => {
     return '';
   }
   const HEURES_MOIS = 50;
-  const RESPS = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Resp. de groupe', 'Aumônier', 'CLH', 'LDC', 'Télévolontaire'];
+  const RESPS = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Conseiller adj.', 'Resp. de groupe', 'Aumônier', 'CLH', 'LDC', 'Télévolontaire',
+    'Comité de gestion', 'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Entretien'];
   const suivi = c => (store().suivi ??= {})[c.id] ??= {};
   // Mois du cycle : A = septembre → février, B = mars → août
   function cycleStart(code) { const y = Number(code.slice(0, 4)); return /A$/.test(code) ? new Date(y - 1, 8, 1) : new Date(y, 2, 1); }
