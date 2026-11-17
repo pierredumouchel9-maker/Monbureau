@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.12.3';
+  const VERSION = '0.12.4';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();

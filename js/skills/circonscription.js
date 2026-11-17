@@ -469,13 +469,13 @@ App.circo = (() => {
     const sigOrder = Object.keys(sigGroups).sort((a, b) => ((ORDRE.indexOf(a) + 1) || 99) - ((ORDRE.indexOf(b) + 1) || 99));
     const ir = rows.filter(r => r.e.ir > 0).sort((a, b) => b.e.ir - a.e.ir || nm(a.p).localeCompare(nm(b.p), 'fr'));
 
-    async function build(k, paging = false) {
+    async function build(k, kc = k, paging = false) {
       const doc = await PDFDocument.create(); doc.setTitle(`Bilan ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
       const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
       const W = 841.89, H = 595.28, M = 26, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
       const jaune2 = rgb(1, .91, .4), jaune = rgb(1, .97, .78), ciel = rgb(.86, .93, .99), orange = rgb(1, .92, .82), red = rgb(.78, .1, .1);
       let page = doc.addPage([W, H]), y = H - M, over = false;
-      const S = v => v * k;
+      const S = v => v * k, Sc = v => v * kc;   // Sc : bilan chiffré, réduit en premier pour tenir sur une page
       const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(9.5), font: o.bold ? B : R, color: o.color || ink});
       const fit = (t, f, size, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
       const footer = () => page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
@@ -496,18 +496,18 @@ App.circo = (() => {
       const rowsIt = [items.slice(0, mainN), items.slice(mainN)].filter(r => r.length);
       const cols = Math.max(...rowsIt.map(r => r.length)), gap = 4, bw = (W - 2 * M - gap * (cols - 1)) / cols;
       const wrap = (t, w, size) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (R.widthOfTextAtSize(nx, size) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
-      for (const it of items) { it.labL = wrap(it.lab, bw - 8, S(8)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, S(7.5))); }
+      for (const it of items) { it.labL = wrap(it.lab, bw - 8, Sc(8)); it.subL = it.subs.flatMap(l => wrap(l, bw - 8, Sc(7.5))); }
       for (const rowIt of rowsIt) {
-        const bh = S(5) + S(9.2) * Math.max(...rowIt.map(s => s.labL.length)) + S(18) + S(8.6) * Math.max(0, ...rowIt.map(s => s.subL.length)) + S(4);
+        const bh = Sc(5) + Sc(9.2) * Math.max(...rowIt.map(s => s.labL.length)) + Sc(18) + Sc(8.6) * Math.max(0, ...rowIt.map(s => s.subL.length)) + Sc(4);
         need(bh + gap);
         rowIt.forEach((s, j) => {
           const bx = M + j * (bw + gap);
           page.drawRectangle({x: bx, y: y - bh, width: bw, height: bh, borderColor: line, borderWidth: .7, color: s.bg === 'ciel' ? ciel : s.bg === 'orange' ? orange : s.red ? jaune : rgb(1, 1, 1)});
-          let yy = y - S(10);
-          s.labL.forEach((l, li) => txt(l, bx + 4, yy - li * S(9.2), {size: S(8), color: mute}));
-          yy -= S(9.2) * Math.max(...rowIt.map(x => x.labL.length));   // chiffres alignés sur la même ligne
-          txt(s.v, bx + (bw - B.widthOfTextAtSize(T(s.v), S(15))) / 2, yy - S(10), {bold: true, size: S(15), color: s.red ? red : ink}); yy -= S(20);
-          s.subL.forEach(l => { txt(l, bx + 4, yy, {size: S(7.5), color: mute}); yy -= S(8.6); });
+          let yy = y - Sc(10);
+          s.labL.forEach((l, li) => txt(l, bx + 4, yy - li * Sc(9.2), {size: Sc(8), color: mute}));
+          yy -= Sc(9.2) * Math.max(...rowIt.map(x => x.labL.length));   // chiffres alignés sur la même ligne
+          txt(s.v, bx + (bw - B.widthOfTextAtSize(T(s.v), Sc(15))) / 2, yy - Sc(10), {bold: true, size: Sc(15), color: s.red ? red : ink}); yy -= Sc(20);
+          s.subL.forEach(l => { txt(l, bx + 4, yy, {size: Sc(7.5), color: mute}); yy -= Sc(8.6); });
         });
         y -= bh + gap;
       }
@@ -578,8 +578,8 @@ App.circo = (() => {
     }
     let res;
     // Une page si possible sans descendre sous une taille lisible ; sinon le bilan continue sur une 2e page
-    for (const k of [1, .94, .88]) { res = await build(k); if (!res.over) break; }
-    if (res.over) res = await build(.88, true);
+    // Toujours une seule page : on réduit d'abord le bilan chiffré, puis, si besoin, le reste
+    for (const [k, kc] of [[1, .85], [1, .75], [1, .68], [.94, .68], [.88, .65], [.83, .62], [.78, .6], [.73, .58], [.68, .55], [.63, .52], [.58, .5], [.53, .48], [.48, .45]]) { res = await build(k, kc); if (!res.over) break; }
     return new Blob([await res.doc.save()], {type: 'application/pdf'});
   }
   function assembleeView(el, name) {
