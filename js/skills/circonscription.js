@@ -357,6 +357,49 @@ App.circo = (() => {
     api.$('#pcGrp', el).onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
     for (const a of api.$$('[data-delgrp]', el)) a.onclick = e => { e.preventDefault(); f().groupes = (f().groupes || []).filter(g => g !== a.dataset.delgrp); api.save(); redraw(); };
   }
+
+  // Trombinoscope d'une assemblée : A4 paysage, 8 × 3 vignettes par page (photo ou initiales, nom, fonction et statut)
+  async function trombiPdf(c, asm, rows) {
+    const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
+    const doc = await PDFDocument.create(); doc.setTitle(`Trombinoscope ${asm} ${c.code}`); doc.setCreator('Mon Bureau');
+    const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
+    const W = 841.89, H = 595.28, M = 28, COLS = 8, ROWS = 3, gap = 8, cw = (W - 2 * M - gap * (COLS - 1)) / COLS, top = 72, ch = (H - top - M - 14 - gap * (ROWS - 1)) / ROWS;
+    const ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), line = rgb(.82, .84, .87), blue = rgb(.12, .25, .4);
+    const fct = p => fonctionAt(c, p) ?? p.fonction;
+    const rank = r => fct(r.p) === 'Ancien' ? 0 : fct(r.p) === 'Assistant' ? 1 : 2;
+    const list = [...rows].sort((a, b) => rank(a) - rank(b) || (a.p.nom || '').localeCompare(b.p.nom || '', 'fr') || (a.p.prenom || '').localeCompare(b.p.prenom || '', 'fr'));
+    const fit = (t, f, size, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
+    const per = COLS * ROWS, pages = Math.max(1, Math.ceil(list.length / per));
+    const nbPhotos = list.filter(r => api.photos.get(r.p.id)).length;
+    for (let pg = 0; pg < pages; pg++) {
+      const page = doc.addPage([W, H]);
+      page.drawText(T(`Trombinoscope — ${asm} — cycle ${c.code}`), {x: M, y: H - M - 14, size: 15, font: B, color: ink});
+      page.drawText(T(`${list.length} proclamateurs · ${nbPhotos} photo(s) · page ${pg + 1}/${pages}`), {x: M, y: H - M - 28, size: 8.5, font: R, color: mute});
+      page.drawText(T(`Mon Bureau · document confidentiel · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
+      for (let i = 0; i < per; i++) {
+        const r = list[pg * per + i]; if (!r) break;
+        const col = i % COLS, row = Math.floor(i / COLS), x = M + col * (cw + gap), yTop = H - top - row * (ch + gap);
+        const ph = ch - 34, pw = cw;
+        page.drawRectangle({x, y: yTop - ch, width: cw, height: ch, borderColor: line, borderWidth: .7});
+        const src = api.photos.get(r.p.id);
+        if (src) {
+          const img = await doc.embedJpg(Uint8Array.from(atob(src.split(',')[1]), ch2 => ch2.charCodeAt(0)));
+          const sc = Math.min(pw / img.width, ph / img.height), w = img.width * sc, h = img.height * sc;
+          page.drawImage(img, {x: x + (pw - w) / 2, y: yTop - ph + (ph - h) / 2, width: w, height: h});
+        } else {
+          page.drawRectangle({x: x + 1, y: yTop - ph, width: pw - 2, height: ph - 1, color: rgb(.93, .94, .96)});
+          const ini = T(((r.p.prenom || '')[0] || '') + ((r.p.nom || '')[0] || '')).toUpperCase();
+          page.drawText(ini, {x: x + (pw - B.widthOfTextAtSize(ini, 26)) / 2, y: yTop - ph / 2 - 9, size: 26, font: B, color: rgb(.7, .73, .78)});
+        }
+        const f = fct(r.p), info = [f && !['Radié'].includes(f) ? f : '', ['PP', 'PS', 'PAP', 'PNB', 'IN'].includes(r.e.statut) ? r.e.statut : ''].filter(Boolean).join(' · ');
+        page.drawText(fit((r.p.nom || '').toUpperCase(), B, 8.5, cw - 6), {x: x + 3, y: yTop - ph - 11, size: 8.5, font: B, color: f === 'Ancien' || f === 'Assistant' ? blue : ink});
+        page.drawText(fit(r.p.prenom || '', R, 8, cw - 6), {x: x + 3, y: yTop - ph - 21, size: 8, font: R, color: ink});
+        if (info) page.drawText(fit(info, R, 7, cw - 6), {x: x + 3, y: yTop - ph - 30, size: 7, font: R, color: mute});
+      }
+    }
+    return new Blob([await doc.save()], {type: 'application/pdf'});
+  }
+
   // Bilan imprimable d'une assemblée pour un cycle — une page A4 paysage (la taille du texte s'adapte pour tenir)
   async function bilanPdf(c, asm, statItems, rows, allRows = rows) {
     const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
@@ -802,6 +845,7 @@ App.circo = (() => {
       el.innerHTML = `${header('proclamateurs')}<div class="notice">Importez d’abord le classeur d’analyse depuis le tableau de bord : il crée les cycles et la liste des assemblées.</div>`;
       bindHeader(el); return;
     }
+    if (!api.photos.ready) api.photos.load().then(() => { if (el.isConnected && api.photos.count()) proclamateursView(el, state); });
     const c = cycles.find(x => x.id === state.cycle) || cycles.at(-1); state.cycle = c.id;
     const asm = asms.find(a => a === state.asm) || asms[0]; state.asm = asm;
     const mois = monthsElapsed(c), objectif = mois * HEURES_MOIS;
@@ -834,6 +878,7 @@ App.circo = (() => {
         <span style="flex:1"></span>
         <button class="btn" id="pImp">Importer le suivi du classeur</button>
         <button class="btn" id="pAdd">+ Proclamateur</button>
+        <button class="btn" id="pTrombi" title="Photos et noms des proclamateurs de l’assemblée">Trombinoscope PDF</button>
         <button class="btn" id="pPdf">Bilan PDF (1 page A4 paysage)</button>
         <button class="btn primary" id="pRep">Reporter dans le tableau du cycle</button>
       </div>
@@ -893,7 +938,7 @@ App.circo = (() => {
         const isP2 = e.statut === 'NP';
         const aSig = autoSignal(ps, e.statut, ev), sigs = sigList(c, p, e, ps, ev), sig = sigs[0] || '', radie = radieDepuis(c, p);
         return `<tr data-id="${p.id}" style="${DEPARTS.includes(e.evt) ? 'opacity:.55;' : ''}${rowStyle(p, e, fonctionAt(c, p) ?? p.fonction)}${sig ? ';outline:3px solid #f5c400;outline-offset:-3px' : ''}">
-          <td class="s21"><input type="checkbox" data-f="s21" title="S-21 vérifiée" ${e.s21 ? 'checked' : ''}></td><td style="${e.statut === 'PP' && p.fonction ? 'box-shadow:inset 6px 0 0 #f59e0b;' : ''}${sig ? 'background:#ffe866;color:#1f2328' : ''}"><strong>${api.esc((p.nom || '').toUpperCase())}</strong> ${api.esc(p.prenom)}${(() => {
+          <td class="s21"><input type="checkbox" data-f="s21" title="S-21 vérifiée" ${e.s21 ? 'checked' : ''}></td><td style="${e.statut === 'PP' && p.fonction ? 'box-shadow:inset 6px 0 0 #f59e0b;' : ''}${sig ? 'background:#ffe866;color:#1f2328' : ''}">${api.photos.get(p.id) ? `<img src="${api.photos.get(p.id)}" alt="" style="width:34px;height:34px;object-fit:cover;border-radius:50%;float:left;margin:0 8px 4px 0">` : ''}<strong>${api.esc((p.nom || '').toUpperCase())}</strong> ${api.esc(p.prenom)}${(() => {
             const why = [...sigs, ev].filter(x => x && x !== 'Sans raison').map(x => SHORT[x] || x).filter((x, i, a) => a.indexOf(x) === i);
             if (why.length) return `<div class="small" style="opacity:.85;font-weight:600">${c.code} : ${why.join(' · ')}</div>`;
             if (e.$new && ps === undefined) return '<div class="small" style="opacity:.75">pas encore de suivi</div>';
@@ -993,6 +1038,10 @@ App.circo = (() => {
       }
       else setEntry(c, p, t.dataset.f, ['statut', 'evt', 'signal'].includes(t.dataset.f) ? t.value : t.dataset.f === 'suivi' ? t.value.trim() : (t.value === '' ? '' : Math.max(0, Number(t.value))));
       if (['statut', 'heures', 'fonction', 'mix', 'suivi'].includes(t.dataset.f)) redraw();
+    });
+    api.$('#pTrombi', el).addEventListener('click', async () => {
+      try { await api.photos.load(); api.download(App.pdf.fileName(`Trombinoscope ${asm} ${c.code}`) + '.pdf', await trombiPdf(c, asm, rows.filter(r => !DEPARTS.includes(r.e.evt))), 'application/pdf'); }
+      catch (err) { console.error(err); api.toast('Erreur lors de la création du PDF : ' + err.message); }
     });
     api.$('#pPdf', el).addEventListener('click', async () => {
       try { api.download(App.pdf.fileName(`Bilan ${asm} ${c.code}`) + '.pdf', await bilanPdf(c, asm, statItems, live, rows), 'application/pdf'); }

@@ -57,10 +57,158 @@ App.annuaire = (() => {
   }
 
   /* ---------- Fiche personne ---------- */
+  /* ---------- Photos (trombinoscope) ---------- */
+  // Réduit une image à 240 px de côté au plus, en JPEG : quelques kilo-octets par photo.
+  async function resizePhoto(file, max = 240) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('image illisible')); i.src = url; });
+      const r = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)), w = Math.round(img.naturalWidth * r), h = Math.round(img.naturalHeight * r);
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+      return cv.toDataURL('image/jpeg', 0.82);
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const pickImages = (multiple = true) => new Promise(res => {
+    const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.multiple = multiple; i.style.display = 'none'; document.body.appendChild(i);
+    const done = v => { res(v); i.remove(); };
+    i.addEventListener('change', () => done([...i.files])); i.addEventListener('cancel', () => done([])); i.click();
+  });
+  // Photos déposées en nombre : rattachées d'après le nom du fichier (« NOM Prénom.jpg », « Prénom_NOM.png »…)
+  async function importPhotos(files) {
+    if (!files.length) return;
+    const tok = t => api.norm(t).replace(/[^a-z ]/g, ' ').split(' ').filter(Boolean).sort().join(' ');
+    const idx = {};
+    for (const p of api.data.persons) (idx[tok(`${p.nom} ${p.prenom}`)] ??= []).push(p);
+    const ok = {}, sans = [], ambigus = [];
+    for (const f of files) {
+      const k = tok(f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_\-.]+/g, ' ').replace(/\d+/g, ' '));
+      const l = idx[k] || [];
+      if (l.length === 1) { try { ok[l[0].id] = await resizePhoto(f); } catch { sans.push(f.name); } }
+      else (l.length ? ambigus : sans).push(f.name);
+    }
+    if (Object.keys(ok).length) await api.photos.setMany(ok);
+    await api.modal({title: 'Photos importées', actions: [{label: 'Fermer', kind: 'primary'}], body: `<p><strong>${Object.keys(ok).length}</strong> photo(s) rattachée(s) à une fiche de l’annuaire.</p>
+      ${ambigus.length ? `<p class="small">Plusieurs personnes portent ce nom (photo à ajouter depuis la bonne fiche) : ${ambigus.map(api.esc).join(', ')}</p>` : ''}
+      ${sans.length ? `<p class="small">Aucune fiche trouvée pour : ${sans.map(api.esc).join(', ')}</p><p class="small muted">Nommez les fichiers « NOM Prénom » comme dans l’annuaire.</p>` : ''}`});
+  }
+
+
+  /* ---------- Photos depuis des captures d'écran d'un trombinoscope ----------
+     Chaque capture montre une liste de cartes : photo ronde à gauche, nom à droite, dans l'ordre alphabétique.
+     L'application repère les photos, écarte les silhouettes par défaut, puis propose les noms dans l'ordre
+     de l'annuaire : il suffit de choisir le premier nom et de corriger ceux qui ne correspondent pas. */
+  async function loadImg(file) {
+    const url = URL.createObjectURL(file);
+    try { return await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('image illisible')); i.src = url; }); }
+    finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+  }
+  function findAvatars(img) {
+    const W = img.naturalWidth, H = img.naturalHeight, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d', {willReadFrequently: true}); ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, W, H).data, XL = Math.round(W * 0.31);
+    const ink = (x, y) => { const i = (y * W + x) * 4; return !(d[i] > 228 && d[i + 1] > 228 && d[i + 2] > 228); };
+    const counts = new Array(H).fill(0);
+    for (let y = 0; y < H; y++) { let n = 0; for (let x = Math.round(W * 0.03); x < XL; x++) if (ink(x, y)) n++; counts[y] = n; }
+    const minRun = W * 0.12, out = [];
+    let y = 0;
+    while (y < H) {
+      if (counts[y] < 4) { y++; continue; }
+      let y2 = y; while (y2 < H && counts[y2] >= 4) y2++;
+      const hRun = y2 - y;
+      if (hRun >= minRun && hRun <= W * 0.4) {
+        // étendue horizontale du cercle sur la ligne du milieu : premier pixel non blanc jusqu'au premier vide
+        const ym = Math.round((y + y2) / 2); let x0 = Math.round(W * 0.03); while (x0 < XL && !ink(x0, ym)) x0++;
+        let x1 = x0, gap = 0; while (x1 < XL + W * 0.05 && gap < 6) { if (ink(x1, ym)) gap = 0; else gap++; x1++; }
+        x1 -= gap; const cx = (x0 + x1) / 2, r = Math.max(hRun, x1 - x0) / 2;
+        const size = Math.round(r * 2), sx = Math.max(0, Math.round(cx - r)), sy = Math.max(0, Math.round((y + y2) / 2 - r));
+        const c2 = document.createElement('canvas'); c2.width = size; c2.height = size;
+        const g = c2.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, size, size);
+        g.save(); g.beginPath(); g.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2); g.clip(); g.drawImage(cv, sx, sy, size, size, 0, 0, size, size); g.restore();
+        // silhouette grise par défaut ?
+        // (deux tons seulement, gris et blanc, sans aucune couleur de peau ni de vêtement)
+        const px = g.getImageData(0, 0, size, size).data; let grey = 0, colour = 0, tot = 0;
+        for (let i = 0; i < px.length; i += 16) { const r2 = px[i], g2 = px[i + 1], b2 = px[i + 2], mx = Math.max(r2, g2, b2), mn = Math.min(r2, g2, b2); tot++; if (mx - mn < 12 && Math.abs((r2 + g2 + b2) / 3 - 178) < 22) grey++; if (mx - mn > 25) colour++; }
+        out.push({canvas: c2, silhouette: grey / tot > 0.18 && colour / tot < 0.03});
+      }
+      y = y2;
+    }
+    return out;
+  }
+  function photoFromCanvas(cv, rot = 0, max = 240) {
+    const s = Math.min(max, cv.width), c = document.createElement('canvas'); c.width = s; c.height = s;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, s, s);
+    g.translate(s / 2, s / 2); g.rotate(rot * Math.PI / 180); g.drawImage(cv, -s / 2, -s / 2, s, s);
+    return c.toDataURL('image/jpeg', 0.85);
+  }
+  async function screenshotsFlow(files, asm) {
+    if (!files.length) return;
+    files = [...files].sort((a, b) => a.name.localeCompare(b.name, 'fr', {numeric: true}));
+    const tiles = [];
+    for (const f of files) { try { tiles.push(...findAvatars(await loadImg(f))); } catch { api.toast(`${f.name} : image illisible`, 'error'); } }
+    if (!tiles.length) return api.toast('Aucune photo repérée sur ces captures.', 'error');
+    const people = api.data.persons.filter(p => !asm || api.norm(p.assemblee || '') === api.norm(asm))
+      .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr') || (a.prenom || '').localeCompare(b.prenom || '', 'fr'));
+    tiles.forEach(t => { t.pid = ''; t.manual = false; t.rot = 0; t.use = !t.silhouette; });
+    const chain = from => { // propose la suite alphabétique après le dernier nom choisi à la main
+      let idx = -1;
+      tiles.forEach((t, i) => { if (t.manual) { idx = people.findIndex(p => p.id === t.pid); } else if (i > from && idx >= 0) { idx++; t.pid = people[idx]?.id || ''; } });
+    };
+    const label = p => `${(p.nom || '').toUpperCase()} ${p.prenom || ''}`.trim();
+    const byLabel = new Map(people.map(p => [api.norm(label(p)), p.id]));
+    const grid = () => tiles.map((t, i) => `<div class="card" data-i="${i}" style="padding:8px;display:flex;flex-direction:column;gap:6px;align-items:center;${t.use ? '' : 'opacity:.55'}">
+        <img src="${t.canvas.toDataURL('image/jpeg', 0.8)}" style="width:84px;height:84px;border-radius:50%;transform:rotate(${t.rot}deg)">
+        <input data-k="pid" list="shNames" placeholder="Taper le nom…" value="${api.esc(t.pid ? label(people.find(p => p.id === t.pid)) : '')}" style="width:100%;font-size:12px;padding:3px 5px;${t.manual ? 'border-color:var(--accent);font-weight:600' : ''}">
+        <div class="row small" style="gap:6px;justify-content:space-between;width:100%">
+          <label class="row" style="gap:4px"><input type="checkbox" data-k="use" ${t.use ? 'checked' : ''}> ${t.silhouette ? 'silhouette' : 'garder'}</label>
+          <button type="button" class="btn" data-k="rot" title="Tourner d'un quart de tour" style="padding:2px 8px">↻</button></div></div>`).join('');
+    const res = await api.modal({title: `Photos repérées sur les captures (${tiles.length})`, wide: true,
+      body: `<p class="small" style="margin-top:0">Tapez le nom de la <strong>première</strong> photo (quelques lettres suffisent, puis choisissez dans la liste) : les suivantes sont proposées dans l’ordre alphabétique de l’annuaire${asm ? ` (${api.esc(asm)})` : ''}. Corrigez celles qui ne correspondent pas, la suite se recale. Les silhouettes par défaut ne sont pas gardées, mais comptent dans l’ordre.</p>
+        <datalist id="shNames">${people.map(p => `<option value="${api.esc(label(p))}">`).join('')}</datalist>
+        <div id="shGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:60vh;overflow:auto">${grid()}</div>`,
+      actions: [{label: 'Annuler', value: false}, {label: 'Enregistrer les photos', kind: 'primary', value: true}],
+      onMount: b => {
+        const g = api.$('#shGrid', b), redraw = () => { const st = g.scrollTop; g.innerHTML = grid(); g.scrollTop = st; };
+        g.addEventListener('change', e => { const card = e.target.closest('[data-i]'); if (!card) return; const i = +card.dataset.i, t = tiles[i];
+          if (e.target.dataset.k === 'pid') { const id = byLabel.get(api.norm(e.target.value.trim())) || ''; if (e.target.value.trim() && !id) { api.toast('Nom introuvable dans l’annuaire de cette assemblée', 'error'); return; } t.pid = id; t.manual = !!id; chain(i); }
+          if (e.target.dataset.k === 'use') t.use = e.target.checked;
+          redraw(); });
+        g.addEventListener('click', e => { if (e.target.dataset.k !== 'rot') return; const t = tiles[+e.target.closest('[data-i]').dataset.i]; t.rot = (t.rot + 90) % 360; redraw(); });
+      }});
+    if (!res) return;
+    const map = {}; for (const t of tiles) if (t.use && t.pid) map[t.pid] = photoFromCanvas(t.canvas, t.rot);
+    if (Object.keys(map).length) await api.photos.setMany(map);
+    api.toast(`${Object.keys(map).length} photo(s) enregistrée(s)`);
+  }
+  async function photosMenu() {
+    const congs = [...new Set(api.data.persons.map(p => p.assemblee).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+    let done = null;
+    await api.modal({title: 'Ajouter des photos', actions: [{label: 'Fermer', value: null}],
+      body: `<div class="stack">
+        <div class="card stack"><strong>Captures d’écran d’un trombinoscope</strong>
+          <p class="small muted" style="margin:0">Sélectionnez les captures d’une assemblée : l’application découpe les photos et vous propose les noms.</p>
+          <label class="field"><span>Assemblée</span><select id="phAsm"><option value="">Toutes</option>${congs.map(c => `<option>${api.esc(c)}</option>`).join('')}</select></label>
+          <button class="btn primary" id="phShots">Choisir les captures d’écran</button></div>
+        <div class="card stack"><strong>Photos nommées « NOM Prénom »</strong>
+          <p class="small muted" style="margin:0">Chaque fichier est rattaché à la fiche qui porte son nom.</p>
+          <button class="btn" id="phNamed">Choisir les photos</button></div></div>`,
+      onMount: (b, close) => {
+        api.$('#phShots', b).onclick = () => { const asm = api.$('#phAsm', b).value; const pr = pickImages(true); close(null); done = pr.then(f => screenshotsFlow(f, asm)); };
+        api.$('#phNamed', b).onclick = () => { const pr = pickImages(true); close(null); done = pr.then(importPhotos); };
+      }});
+    if (done) await done;
+  }
+
   async function editPerson(person) {
+    await api.photos.load();
     const isNew = !person; const p = person ? {...person} : {id: api.uid(), civilite: '', prenom: '', nom: ''};
     const congs = api.data.congregations.map(c => `<option value="${api.esc(c.nom)}">`).join('');
+    let photo = api.photos.get(p.id), photoChanged = false;
     const body = `<form class="form-grid" onsubmit="return false">
+      <div class="field wide"><span>Photo</span><div class="row" style="gap:10px;align-items:center">
+        <img id="pPhoto" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px;background:var(--line);${photo ? '' : 'display:none'}" src="${photo || ''}">
+        <button type="button" class="btn" id="pPhotoAdd">${photo ? 'Changer la photo' : 'Ajouter une photo'}</button>
+        <button type="button" class="btn" id="pPhotoDel" ${photo ? '' : 'style="display:none"'}>Retirer</button></div></div>
       <label class="field"><span>Civilité</span><select name="civilite"><option value=""></option>${['Frère', 'Sœur'].map(v => `<option ${p.civilite === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="field"><span>Prénom</span><input type="text" name="prenom" value="${api.esc(p.prenom)}"></label>
       <label class="field"><span>Nom</span><input type="text" name="nom" value="${api.esc(p.nom)}"></label>
@@ -78,7 +226,7 @@ App.annuaire = (() => {
     const actions = [];
     if (!isNew) actions.push({label: 'Supprimer', kind: 'danger', onClick: async () => {
       if (!await api.confirm('Supprimer', `Supprimer ${fullName(p)} de l’annuaire ?`, 'Supprimer', true)) return false;
-      api.data.persons = api.data.persons.filter(x => x.id !== p.id); api.save(); api.toast('Personne supprimée'); return 'deleted';
+      api.data.persons = api.data.persons.filter(x => x.id !== p.id); api.save(); await api.photos.set(p.id, null); api.toast('Personne supprimée'); return 'deleted';
     }});
     actions.push({label: 'Annuler', value: null}, {label: 'Enregistrer', kind: 'primary', onClick: async b => {
       const f = api.$('form', b), err = api.$('#pErr', b);
@@ -91,9 +239,15 @@ App.annuaire = (() => {
       if (dup && !await api.confirm('Doublon possible', `${fullName(dup)} existe déjà dans l’annuaire (${dup.assemblee || 'sans assemblée'}). Enregistrer quand même ?`, 'Enregistrer')) return false;
       ensureCongregation(p.assemblee);
       if (isNew) api.data.persons.push(p); else Object.assign(person, p);
+      if (photoChanged) await api.photos.set(p.id, photo);
       api.save(); api.toast(isNew ? 'Personne ajoutée' : 'Fiche enregistrée'); return 'saved';
     }});
-    return api.modal({title: isNew ? 'Nouvelle personne' : fullName(p), body, actions, onMount: b => api.$('[name=prenom]', b).focus()});
+    return api.modal({title: isNew ? 'Nouvelle personne' : fullName(p), body, actions, onMount: b => {
+      api.$('[name=prenom]', b).focus();
+      const img = api.$('#pPhoto', b), del = api.$('#pPhotoDel', b), add = api.$('#pPhotoAdd', b);
+      add.onclick = async () => { const [f] = await pickImages(false); if (!f) return; try { photo = await resizePhoto(f); photoChanged = true; img.src = photo; img.style.display = ''; del.style.display = ''; add.textContent = 'Changer la photo'; } catch { api.toast('Cette image n’a pas pu être lue.', 'error'); } };
+      del.onclick = () => { photo = null; photoChanged = true; img.style.display = 'none'; del.style.display = 'none'; add.textContent = 'Ajouter une photo'; };
+    }});
   }
 
   /* ---------- Doublons ---------- */
@@ -410,7 +564,7 @@ App.annuaire = (() => {
     function render() {
       const d = api.data;
       el.innerHTML = `<div class="page-head"><div><h1>Annuaire</h1><p>Chaque personne est enregistrée une seule fois et sert à tous les skills.</p></div>
-        <div class="row"><button class="btn" id="aImp">Importer Excel / CSV / PDF</button><button class="btn" id="aCmp">Mettre à jour depuis un fichier</button><button class="btn" id="aDup">Doublons</button>
+        <div class="row"><button class="btn" id="aImp">Importer Excel / CSV / PDF</button><button class="btn" id="aCmp">Mettre à jour depuis un fichier</button><button class="btn" id="aDup">Doublons</button><button class="btn" id="aPho" title="Ajouter des photos en nombre : fichiers nommés « NOM Prénom »">Photos</button>
         <button class="btn primary" id="aAdd">${tab === 'personnes' ? '+ Personne' : '+ Assemblée'}</button></div></div>
         <div class="tabs"><button data-tab="personnes" class="${tab === 'personnes' ? 'active' : ''}">Personnes (${d.persons.length})</button>
         <button data-tab="assemblees" class="${tab === 'assemblees' ? 'active' : ''}">Assemblées (${d.congregations.length})</button></div>
@@ -449,13 +603,14 @@ App.annuaire = (() => {
       api.$$('[data-tab]', el).forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; render(); }));
       api.$('#aAdd', el).addEventListener('click', async () => { if (await (tab === 'personnes' ? editPerson() : editCongregation())) render(); });
       api.$('#aDup', el).addEventListener('click', async () => { await showDuplicates(); render(); });
+      api.$('#aPho', el).addEventListener('click', async () => { await photosMenu(); render(); });
       api.$('#aImp', el).addEventListener('click', () => importFlow(render));
       api.$('#aCmp', el).addEventListener('click', () => importFlow(render, 'compare'));
     }
     render();
   }
 
-  return {mount, editPerson, fullName, keyOf, findByName, splitName, ensureCongregation, emailOk, parseDate, fmtDate, yearsSince};
+  return {mount, editPerson, resizePhoto, importPhotos, fullName, keyOf, findByName, splitName, ensureCongregation, emailOk, parseDate, fmtDate, yearsSince};
 })();
 
 App.registerSkill({

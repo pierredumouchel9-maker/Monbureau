@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.11.4';
+  const VERSION = '0.12.1';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -82,6 +82,21 @@ const App = (() => {
     };
   }
 
+  /* ---------- Photos (trombinoscope) : stockées à part, chiffrées avec la même clé, chargées à la demande ---------- */
+  let photos = null, photosLoading = null;
+  const photoApi = {
+    get ready() { return photos !== null; },
+    async load() {
+      if (photos) return photos; if (!key) return {};
+      return photosLoading ??= (async () => { const box = await kvGet('photos'); photos = box ? await open(key, box) : {}; photosLoading = null; return photos; })();
+    },
+    get(id) { return photos ? photos[id] || null : null; },
+    count() { return photos ? Object.keys(photos).length : 0; },
+    async set(id, dataUrl) { await photoApi.load(); if (dataUrl) photos[id] = dataUrl; else delete photos[id]; await kvSet('photos', await seal(key, photos)); },
+    async setMany(map) { await photoApi.load(); Object.assign(photos, map); await kvSet('photos', await seal(key, photos)); },
+    async prune(ids) { await photoApi.load(); let n = 0; for (const id of Object.keys(photos)) if (!ids.has(id)) { delete photos[id]; n++; } if (n) await kvSet('photos', await seal(key, photos)); return n; }
+  };
+
   function save() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saving = saving.then(writeNow).catch(e => toast('Échec de l’enregistrement : ' + e.message, 'error')); }, 300);
@@ -110,7 +125,7 @@ const App = (() => {
 
   async function lock(message) {
     if (key) { try { await flush(); } catch (e) {} }
-    key = null; data = null; vault.forget();
+    key = null; data = null; photos = null; vault.forget();
     clearInterval(lockTimer);
     $$('dialog[open]').forEach(d => d.close());
     $('#main').innerHTML = ''; $('#sidebar').innerHTML = '';
@@ -153,7 +168,8 @@ const App = (() => {
     const newVk = await deriveKey(newPw, vaultSalt);
     const dataBox = await seal(newKey, data);
     const vaultBox = await seal(newVk, vaultData);
-    await kv('readwrite', s => { s.put(newMeta, 'meta'); s.put(dataBox, 'data'); s.put(vaultBox, 'vault'); });
+    const oldPhotos = await kvGet('photos'), photosBox = oldPhotos ? await seal(newKey, await open(k, oldPhotos)) : null;
+    await kv('readwrite', s => { s.put(newMeta, 'meta'); s.put(dataBox, 'data'); s.put(vaultBox, 'vault'); if (photosBox) s.put(photosBox, 'photos'); });
     meta = newMeta; key = newKey; vault.forget();
   }
 
@@ -319,6 +335,7 @@ const App = (() => {
     navigate: h => { location.hash = h; },
     refreshNav: () => renderNav(),
     get vault() { return vault; },
+    photos: photoApi,
     get meta() { return meta; },
     changePassword, lock,
     get skills() { return skills; }, isEnabled
@@ -359,7 +376,7 @@ const App = (() => {
   async function replaceAll(records) {
     // Oublier les données en mémoire : sinon l'enregistrement automatique (minuterie ou fermeture de page)
     // réécrirait les anciennes données par-dessus celles qu'on vient de restaurer.
-    clearTimeout(saveTimer); await saving.catch(() => {}); key = null; data = null;
+    clearTimeout(saveTimer); await saving.catch(() => {}); key = null; data = null; photos = null;
     await kv('readwrite', s => { s.clear(); for (const [k, v] of Object.entries(records)) s.put(v, k); });
   }
 

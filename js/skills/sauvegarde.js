@@ -6,8 +6,9 @@ App.backup = (() => {
 
   async function exportBackup() {
     await api.flush();
-    const [meta, data, vault] = await Promise.all([App.kvGet('meta'), App.kvGet('data'), App.kvGet('vault')]);
+    const [meta, data, vault, photos] = await Promise.all([App.kvGet('meta'), App.kvGet('data'), App.kvGet('vault'), App.kvGet('photos')]);
     const file = {format: 'mon-bureau-sauvegarde', version: 1, exportedAt: new Date().toISOString(), app: App.VERSION, meta, data, vault};
+    if (photos) file.photos = photos;   // photos chiffrées, comme le reste
     const d = new Date(), pad = n => String(n).padStart(2, '0');
     api.download(`MonBureau-sauvegarde-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.monbureau`, new Blob([JSON.stringify(file)], {type: 'application/json'}));
     api.data.settings.lastBackup = file.exportedAt; api.save();
@@ -28,7 +29,7 @@ App.backup = (() => {
       const k = await App.deriveKey(pw, App.unb64(file.meta.salt), file.meta.iterations);
       await App.open(k, file.data); // vérifie le mot de passe
     } catch { return api.toast('Mot de passe incorrect pour cette sauvegarde.', 'error'); }
-    await App.replaceAll({meta: file.meta, data: file.data, vault: file.vault});
+    await App.replaceAll({meta: file.meta, data: file.data, vault: file.vault, ...(file.photos ? {photos: file.photos} : {})});
     api.toast('Sauvegarde restaurée');
     setTimeout(() => location.reload(), 600);
   }
