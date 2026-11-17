@@ -448,9 +448,9 @@ App.circo = (() => {
     const rowOf = q => rows.find(r => r.p.id === q.id) || {p: q, e: entry(c, q)};
     const jauneOf = r => { const ps = prevStatut(c, r.p), ev = r.e.evt || autoEvt(ps, r.e.statut); return sigList(c, r.p, r.e, ps, ev).some(x => SIG_JAUNE.includes(x)); };
     const linesOf = (l, nomme) => l.flatMap((r, bi) => {
-      const out = [{name: nm(r.p), d: detail(r, nomme), bi, hi: jauneOf(r)}];
+      const out = [{name: nm(r.p), d: detail(r, nomme), bi, hi: jauneOf(r), pid: r.p.id}];
       const sp = nomme ? spouseOf(r.p) : null;
-      if (sp) { const sr = rowOf(sp); out.push({name: `Épouse : ${sp.prenom || ''}`, d: activite(sr).join(' · '), sub: true, bi}); }
+      if (sp) { const sr = rowOf(sp); out.push({name: `Épouse : ${sp.prenom || ''}`, d: activite(sr).join(' · '), sub: true, bi, pid: sp.id}); }
       return out;
     });
     // Signalements : lignes surlignées et évolutions depuis le cycle précédent, regroupées par motif
@@ -512,18 +512,28 @@ App.circo = (() => {
       groups.forEach(([t, l], gi) => txt(`${t} (${l.length})`, M + gi * (cw + 10), y - S(9), {bold: true, size: S(8.6)}));
       y -= S(13);
       const cols4 = groups.map(([, l, nomme]) => linesOf(l, nomme));
+      // Photos (trombinoscope) à gauche des noms, si l'annuaire en contient pour ces personnes
+      const withPhoto = cols4.flat().some(ln => api.photos.get(ln.pid));
+      const lhN = withPhoto ? S(19) : lh, phS = lhN - S(1.5), imgs = {};
+      const photoOf = async pid => { const src = api.photos.get(pid); if (!src) return null; return imgs[pid] ??= await doc.embedJpg(Uint8Array.from(atob(src.split(',')[1]), ch => ch.charCodeAt(0))); };
       const maxN = Math.max(1, ...cols4.map(l => l.length));
-      need(maxN * lh);
+      need(maxN * lhN);
       for (let kk = 0; kk < maxN; kk++) {
-        cols4.forEach((l, gi) => { const ln = l[kk]; if (!ln) return;
-          if (ln.hi) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lh - S(1), width: cw + 4, height: lh, color: jaune2});
-          else if (ln.bi % 2 === 0) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lh - S(1), width: cw + 4, height: lh, color: ciel});
-          const cx = M + gi * (cw + 10) + (ln.sub ? S(9) : 0), wmax = cw - (ln.sub ? S(9) : 0);
+        for (let gi = 0; gi < cols4.length; gi++) { const ln = cols4[gi][kk]; if (!ln) continue;
+          if (ln.hi) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lhN - S(1), width: cw + 4, height: lhN, color: jaune2});
+          else if (ln.bi % 2 === 0) page.drawRectangle({x: M + gi * (cw + 10) - 2, y: y - lhN - S(1), width: cw + 4, height: lhN, color: ciel});
+          let cx = M + gi * (cw + 10) + (ln.sub ? S(9) : 0), wmax = cw - (ln.sub ? S(9) : 0);
+          if (withPhoto) {
+            const im = await photoOf(ln.pid);
+            if (im) page.drawImage(im, {x: cx, y: y - lhN, width: phS, height: phS});
+            cx += phS + S(3); wmax -= phS + S(3);
+          }
+          const yb = withPhoto ? y - lhN / 2 - S(2.2) : y - S(8);
           const f1 = ln.sub ? R : B, s1 = ln.sub ? fd : fs;
           const n1 = fit(ln.name, f1, s1, wmax * .58), w1 = f1.widthOfTextAtSize(n1, s1);
-          txt(n1, cx, y - S(8), {size: s1, bold: !ln.sub, color: ln.sub ? mute : ink});
-          if (ln.d) txt(fit(ln.d, R, fd, wmax - w1 - 5), cx + w1 + 4, y - S(8), {size: fd, color: mute}); });
-        y -= lh;
+          txt(n1, cx, yb, {size: s1, bold: !ln.sub, color: ln.sub ? mute : ink});
+          if (ln.d) txt(fit(ln.d, R, fd, wmax - w1 - 5), cx + w1 + 4, yb, {size: fd, color: mute}); }
+        y -= lhN;
       }
 
       // Irréguliers : colonnes
@@ -1044,7 +1054,7 @@ App.circo = (() => {
       catch (err) { console.error(err); api.toast('Erreur lors de la création du PDF : ' + err.message); }
     });
     api.$('#pPdf', el).addEventListener('click', async () => {
-      try { api.download(App.pdf.fileName(`Bilan ${asm} ${c.code}`) + '.pdf', await bilanPdf(c, asm, statItems, live, rows), 'application/pdf'); }
+      try { await api.photos.load(); api.download(App.pdf.fileName(`Bilan ${asm} ${c.code}`) + '.pdf', await bilanPdf(c, asm, statItems, live, rows), 'application/pdf'); }
       catch (err) { console.error(err); api.toast('Erreur lors de la création du PDF : ' + err.message); }
     });
     api.$('#pRep', el).addEventListener('click', async () => {
