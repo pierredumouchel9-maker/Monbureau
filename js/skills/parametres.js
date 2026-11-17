@@ -23,6 +23,8 @@ App.registerSkill({
           <label class="row small"><input type="checkbox" id="sHide" ${s.lockOnHide ? 'checked' : ''}> Verrouiller quand l’application reste plus de 30 secondes en arrière-plan</label>
         </div>
 
+        <div class="card stack" id="cSync"></div>
+
         <form class="card stack" id="fPw" onsubmit="return false"><strong>Changer le mot de passe maître</strong>
           <div class="form-grid">
             <label class="field"><span>Mot de passe actuel</span><input type="password" name="old" autocomplete="current-password"></label>
@@ -38,6 +40,7 @@ App.registerSkill({
           <p class="small muted" style="margin:0">Efface définitivement toutes les données de cet appareil. Faites d’abord une sauvegarde.</p>
           <div><button class="btn danger" id="wipe">Effacer toutes les données</button></div></div>
       </div>`;
+    if (App.dropbox) App.dropbox.card(api.$('#cSync', el));
     api.$('#pSave', el).addEventListener('click', () => {
       const f = api.$('#fProfil', el); for (const k of Object.keys(p)) if (f[k]) p[k] = f[k].value.trim();
       api.save(); api.toast('Profil enregistré');

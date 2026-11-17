@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.12.5';
+  const VERSION = '0.13.0';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -92,8 +92,8 @@ const App = (() => {
     },
     get(id) { return photos ? photos[id] || null : null; },
     count() { return photos ? Object.keys(photos).length : 0; },
-    async set(id, dataUrl) { await photoApi.load(); if (dataUrl) photos[id] = dataUrl; else delete photos[id]; await kvSet('photos', await seal(key, photos)); },
-    async setMany(map) { await photoApi.load(); Object.assign(photos, map); await kvSet('photos', await seal(key, photos)); },
+    async set(id, dataUrl) { await photoApi.load(); if (dataUrl) photos[id] = dataUrl; else delete photos[id]; await kvSet('photos', await seal(key, photos)); emit('saved'); },
+    async setMany(map) { await photoApi.load(); Object.assign(photos, map); await kvSet('photos', await seal(key, photos)); emit('saved'); },
     async prune(ids) { await photoApi.load(); let n = 0; for (const id of Object.keys(photos)) if (!ids.has(id)) { delete photos[id]; n++; } if (n) await kvSet('photos', await seal(key, photos)); return n; }
   };
 
@@ -101,7 +101,11 @@ const App = (() => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saving = saving.then(writeNow).catch(e => toast('Échec de l’enregistrement : ' + e.message, 'error')); }, 300);
   }
-  async function writeNow() { if (key && data) await kvSet('data', await seal(key, data)); }
+  async function writeNow() { if (key && data) { await kvSet('data', await seal(key, data)); emit('saved'); } }
+  // Petits événements internes (utilisés par la synchronisation)
+  const listeners = {};
+  function on(ev, fn) { (listeners[ev] ??= []).push(fn); }
+  function emit(ev, ...a) { for (const fn of listeners[ev] || []) { try { fn(...a); } catch (e) { console.warn(e); } } }
   async function flush() { clearTimeout(saveTimer); await saving; await writeNow(); }
 
   /* ---------- Verrouillage ---------- */
@@ -124,7 +128,7 @@ const App = (() => {
   }
 
   async function lock(message) {
-    if (key) { try { await flush(); } catch (e) {} }
+    if (key) { try { await flush(); } catch (e) {} emit('locking'); }
     key = null; data = null; photos = null; vault.forget();
     clearInterval(lockTimer);
     $$('dialog[open]').forEach(d => d.close());
@@ -170,7 +174,7 @@ const App = (() => {
     const vaultBox = await seal(newVk, vaultData);
     const oldPhotos = await kvGet('photos'), photosBox = oldPhotos ? await seal(newKey, await open(k, oldPhotos)) : null;
     await kv('readwrite', s => { s.put(newMeta, 'meta'); s.put(dataBox, 'data'); s.put(vaultBox, 'vault'); if (photosBox) s.put(photosBox, 'photos'); });
-    meta = newMeta; key = newKey; vault.forget();
+    meta = newMeta; key = newKey; vault.forget(); emit('saved');
   }
 
   function migrate() {
@@ -189,7 +193,7 @@ const App = (() => {
         const k = await deriveKey(password, unb64(meta.vaultSalt), meta.iterations);
         vdata = await open(k, await kvGet('vault')); vkey = k;
       },
-      async save() { if (vkey && vdata) await kvSet('vault', await seal(vkey, vdata)); },
+      async save() { if (vkey && vdata) { await kvSet('vault', await seal(vkey, vdata)); emit('saved'); } },
       forget() { vkey = null; vdata = null; }
     };
   })();
@@ -234,6 +238,23 @@ const App = (() => {
     $('#lock').classList.add('hidden'); $('#lock').innerHTML = '';
     $('#app').classList.remove('hidden');
     touch(); clearInterval(lockTimer); lockTimer = setInterval(checkIdle, 15000);
+    renderNav(); route();
+    emit('unlocked');
+  }
+
+  /* ---------- Synchronisation : échange des enregistrements déjà chiffrés ---------- */
+  async function getBoxes() {
+    if (key) await flush();
+    const [m, d, v, ph] = await Promise.all([kvGet('meta'), kvGet('data'), kvGet('vault'), kvGet('photos')]);
+    return {meta: m, data: d, vault: v, photos: ph || null};
+  }
+  // Remplace les données de cet appareil par celles reçues (même mot de passe, même sel), sans déverrouiller à nouveau
+  async function adoptRemote(file) {
+    if (!key) throw new Error('verrouillé');
+    const d = await open(key, file.data);
+    clearTimeout(saveTimer); await saving.catch(() => {});
+    await kv('readwrite', s => { s.put(file.data, 'data'); s.put(file.vault, 'vault'); if (file.photos) s.put(file.photos, 'photos'); else s.delete('photos'); });
+    data = d; photos = null; vault.forget();
     renderNav(); route();
   }
 
@@ -380,6 +401,6 @@ const App = (() => {
     await kv('readwrite', s => { s.clear(); for (const [k, v] of Object.entries(records)) s.put(v, k); });
   }
 
-  return {VERSION, start, registerSkill, api, kvGet, kvSet, kvClear, replaceAll, deriveKey, open, unb64,
+  return {VERSION, start, registerSkill, api, kvGet, kvSet, kvClear, replaceAll, deriveKey, open, unb64, on, getBoxes, adoptRemote,
           get meta() { return meta; }, set meta(m) { meta = m; }, renderLock};
 })();
