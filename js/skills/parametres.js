@@ -13,6 +13,7 @@ App.registerSkill({
             <label class="field"><span>Fonction</span><input type="text" name="fonction" value="${api.esc(p.fonction)}"></label>
             <label class="field"><span>Téléphone</span><input type="tel" name="telephone" value="${api.esc(p.telephone)}"></label>
             <label class="field"><span>Mail</span><input type="email" name="email" value="${api.esc(p.email)}"></label>
+            <label class="field"><span>Prénom de mon épouse</span><input type="text" name="epouse" value="${api.esc(p.epouse || '')}" placeholder="pour son programme de prédication"></label>
             <label class="field wide"><span>En-tête des lettres</span><input type="text" name="entete" value="${api.esc(p.entete)}" placeholder="Ex. : CIRCONSCRIPTION …"></label>
           </div>
           <div><button class="btn primary" id="pSave">Enregistrer le profil</button></div></form>

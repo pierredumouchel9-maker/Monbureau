@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.17.0';
+  const VERSION = '0.19.0';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -75,7 +75,7 @@ const App = (() => {
     return {
       version: 1,
       settings: {autoLockMin: 5, lockOnHide: true, lastBackup: null,
-        profil: {prenom: '', nom: '', fonction: '', telephone: '', email: '', entete: ''}},
+        profil: {prenom: '', nom: '', fonction: '', telephone: '', email: '', entete: '', epouse: ''}},
       persons: [], congregations: [], templates: [], docs: {},
       skills: {disabled: {}},
       modules: {}

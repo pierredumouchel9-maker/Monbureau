@@ -1,4 +1,4 @@
-# Mon Bureau — socle (version 0.17.0)
+# Mon Bureau — socle (version 0.19.0)
 
 Application personnelle, modulaire, chiffrée et hors ligne.
 

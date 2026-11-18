@@ -359,7 +359,9 @@ App.circo = (() => {
   }
 
   // Documents joints à une assemblée (une seule version gardée par type ; stockés chiffrés à part, synchronisés un par un)
-  const DOC_KINDS = [{k: 'organigramme', l: 'Organigramme'}, {k: 'groupes', l: 'Groupes de prédication'}];
+  const docKinds = () => { const pr = api.data.settings.profil || {};
+    return [{k: 'organigramme', l: 'Organigramme'}, {k: 'groupes', l: 'Groupes de prédication', pl: true},
+      {k: 'progMoi', l: `Programme de prédication — ${pr.prenom || 'moi'}`, mail: true}, {k: 'progEpouse', l: `Programme de prédication — ${pr.epouse || 'mon épouse'}`, mail: true}]; };
   const DOC_ACCEPT = '.pdf,.xlsx,.xls,.docx,.doc,application/pdf';
   const kSize = b => b > 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
   const docIcon = d => /pdf/.test(d.type) || /\.pdf$/i.test(d.name) ? '📕' : /sheet|excel/.test(d.type) || /\.xlsx?$/i.test(d.name) ? '📗' : /word/.test(d.type) || /\.docx?$/i.test(d.name) ? '📘' : '📄';
@@ -369,12 +371,12 @@ App.circo = (() => {
       return `<div class="row" style="gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line, #e5e5e5)">
         <div style="min-width:190px"><strong>${kd.l}</strong></div>
         ${d ? `<div style="flex:1;min-width:0">${docIcon(d)} <span title="${api.esc(d.name)}">${api.esc(d.name)}</span> <span class="small muted">· ${kSize(d.size)} · importé le ${api.dateCourte(d.date)}</span> <span class="small muted" data-docwait="${d.id}"></span></div>
-          <button class="btn" data-docopen="${d.id}">Ouvrir</button>${kd.k === 'organigramme' ? `<button class="btn primary" data-docread="${d.id}">Lire les responsabilités</button>` : ''}<button class="btn" data-docadd="${kd.k}">Remplacer</button><button class="btn" data-docdel="${d.id}" title="Retirer ce document">✕</button>`
+          <button class="btn" data-docopen="${d.id}">Ouvrir</button>${kd.k === 'organigramme' ? `<button class="btn primary" data-docread="${d.id}">Lire les responsabilités</button>` : ''}<button class="btn${kd.mail ? ' primary' : ''}" data-docmail="${d.id}" title="Envoyer par mail">✉︎ Envoyer</button><button class="btn" data-docadd="${kd.k}">Remplacer</button><button class="btn" data-docdel="${d.id}" title="Retirer ce document">✕</button>`
           : `<div style="flex:1" class="small muted">Aucun document</div><button class="btn" data-docadd="${kd.k}">Ajouter (PDF, Excel, Word)</button>`}
       </div>`;
     };
     return `<div class="card" style="margin-bottom:16px"><strong>Documents de l’assemblée</strong>
-      <div style="margin-top:8px">${DOC_KINDS.map(row).join('')}</div>
+      <div style="margin-top:8px">${docKinds().map(row).join('')}</div>
       <p class="small muted" style="margin:6px 0 0">Seule la dernière version est gardée. Les documents sont chiffrés sur l’appareil et inclus dans les sauvegardes et la synchronisation.</p></div>`;
   }
   // Document importé sur un autre appareil : on tente une synchronisation avant d'abandonner
@@ -392,7 +394,7 @@ App.circo = (() => {
       const old = api.docs.list({asm: name, kind});
       await api.docs.add(file, {asm: name, kind});
       for (const d of old) await api.docs.remove(d.id);
-      api.toast(`${DOC_KINDS.find(x => x.k === kind).l} enregistré${kind === 'groupes' ? 's' : ''}`); redraw();
+      const kl = docKinds().find(x => x.k === kind); api.toast(`${kl.l} enregistré${kl.pl ? 's' : ''}`); redraw();
       if (kind === 'organigramme' && /\.(pdf|xlsx|docx)$/i.test(file.name)) { const nd = api.docs.list({asm: name, kind})[0]; if (nd) readOrganigramme(name, nd.id, redraw); }
     });
     for (const b of api.$$('[data-docopen]', el)) b.addEventListener('click', () => {
@@ -409,6 +411,7 @@ App.circo = (() => {
       await api.docs.remove(d.id); redraw();
     });
     for (const b of api.$$('[data-docread]', el)) b.addEventListener('click', () => readOrganigramme(name, b.dataset.docread, redraw));
+    for (const b of api.$$('[data-docmail]', el)) b.addEventListener('click', () => mailDoc(name, b.dataset.docmail));
     for (const s of api.$$('[data-docwait]', el)) api.docs.available(s.dataset.docwait).then(ok => { if (!ok) s.textContent = '· en attente de synchronisation'; });
   }
 
@@ -446,6 +449,44 @@ App.circo = (() => {
         ${b.aussi ? `<div class="small muted">Aussi : ${api.esc(b.aussi)}</div>` : ''}</div>`).join('')}
       </div>
       ${o.autres.length ? `<div class="small" style="margin-top:8px"><span class="muted">Autres responsabilités :</span> ${o.autres.map(x => `<strong>${api.esc(x.r)}</strong> ${who(x)}`).join(' · ')}</div>` : ''}${o.manque.length || o.doublons.length ? readBtn : ''}</div>`;
+  }
+
+  // Envoi d'un document par mail : rien ne part sans vous — l'application prépare le message, vous l'envoyez depuis votre messagerie
+  async function mailDoc(name, docId) {
+    const d = api.docs.list().find(x => x.id === docId); if (!d) return;
+    const blob = await docBlob(docId); if (!blob) return api.toast(NOT_HERE, 'error');
+    const kl = docKinds().find(x => x.k === d.kind) || {l: 'Document'}, pr = api.data.settings.profil || {};
+    const fn = p => `${p.prenom || ''} ${(p.nom || '').toUpperCase()}`.trim();
+    const mem = members(name).filter(p => p.email);
+    const DEF = d.kind?.startsWith('prog') ? ['CCA', 'Resp. Prédication'] : ['CCA'];
+    const KEY = ['CCA', 'Secrétaire', 'Resp. Prédication'];
+    const rank = p => { const i = KEY.findIndex(r => (p.resp || []).includes(r)); return i < 0 ? 9 : i; };
+    const cand = mem.filter(p => rank(p) < 9 || p.fonction === 'Ancien').sort((a, b) => rank(a) - rank(b) || String(a.nom).localeCompare(String(b.nom), 'fr'));
+    const qui = d.kind === 'progMoi' ? pr.prenom : d.kind === 'progEpouse' ? pr.epouse : '';
+    const sujet = d.kind?.startsWith('prog') ? `Programme de prédication${qui ? ' de ' + qui : ''} — ${name}` : `${kl.l} — ${name}`;
+    const quoi = d.kind === 'progMoi' ? 'mon programme de prédication' : d.kind === 'progEpouse' ? `le programme de prédication${qui ? ' de ' + qui : ' de mon épouse'}` : `le document « ${kl.l} »`;
+    const corps = `Bonjour,\n\nVeuillez trouver ci-joint ${quoi} pour l’assemblée de ${name}.\n\nFraternellement,\n${[pr.prenom, pr.nom].filter(Boolean).join(' ')}`;
+    const canShare = !!(navigator.canShare && navigator.canShare({files: [new File([blob], d.name, {type: blob.type})]}));
+    const body = `<p class="small muted" style="margin-top:0">${docIcon(d)} <strong>${api.esc(d.name)}</strong> · ${kSize(d.size)}</p>
+      <div class="small" style="margin-bottom:4px"><strong>Destinataires</strong> (adresses de l’annuaire)</div>
+      ${cand.length ? `<div style="max-height:180px;overflow:auto;border:1px solid var(--line,#e2e4e8);border-radius:6px;padding:4px 8px">${cand.map(p => `<label class="row small" style="gap:6px;padding:2px 0"><input type="checkbox" data-to="${api.esc(p.email)}" ${(p.resp || []).some(r => DEF.includes(r)) ? 'checked' : ''}> ${api.esc(fn(p))} <span class="muted">${api.esc((p.resp || []).filter(r => KEY.includes(r)).join(', ') || p.fonction || '')} · ${api.esc(p.email)}</span></label>`).join('')}</div>`
+        : `<p class="small muted">Aucun ancien de ${api.esc(name)} n’a d’adresse mail dans l’annuaire.</p>`}
+      <label class="field" style="margin-top:8px"><span>Autres adresses (séparées par des virgules)</span><input type="text" id="mOther" placeholder="ex. : prenom.nom@exemple.fr"></label>
+      <label class="field"><span>Objet</span><input type="text" id="mSubj" value="${api.esc(sujet)}"></label>
+      <label class="field"><span>Message</span><textarea id="mBody" rows="7">${api.esc(corps)}</textarea></label>
+      <p class="small muted" style="margin:6px 0 0">${canShare ? '« Partager avec la pièce jointe » ouvre le choix de l’application (Mail, Gmail…) avec le PDF déjà joint ; les adresses sont copiées : collez-les dans « À ». ' : ''}« Ouvrir la messagerie » prépare le mail avec les destinataires et télécharge le fichier : joignez-le avant d’envoyer.</p>`;
+    const read = el => ({to: [...api.$$('input[data-to]:checked', el).map(i => i.dataset.to), ...api.$('#mOther', el).value.split(/[,;\s]+/).filter(x => /@/.test(x))],
+      subj: api.$('#mSubj', el).value, body: api.$('#mBody', el).value});
+    await api.modal({title: 'Envoyer par mail', body, wide: true, actions: [
+      {label: 'Annuler', value: null},
+      {label: 'Ouvrir la messagerie', onClick: el => { const m = read(el); api.download(d.name, blob);
+        setTimeout(() => location.href = `mailto:${m.to.map(encodeURIComponent).join(',')}?subject=${encodeURIComponent(m.subj)}&body=${encodeURIComponent(m.body)}`, 600); return 'mailto'; }},
+      ...(canShare ? [{label: 'Partager avec la pièce jointe', kind: 'primary', onClick: el => { const m = read(el);
+        if (m.to.length && navigator.clipboard) navigator.clipboard.writeText(m.to.join(', ')).catch(() => {});
+        navigator.share({files: [new File([blob], d.name, {type: blob.type || 'application/pdf'})], title: m.subj, text: m.body})
+          .then(() => api.toast(m.to.length ? 'Adresses copiées : collez-les dans « À » avant d’envoyer.' : 'Partage ouvert'))
+          .catch(e => { if (e.name !== 'AbortError') api.toast('Partage impossible : ' + e.message, 'error'); });
+        return 'share'; }}] : [])]});
   }
 
   // Lecture d'un organigramme : propose les responsabilités trouvées, à valider frère par frère
@@ -735,8 +776,72 @@ App.circo = (() => {
     // Toujours une seule page : on réduit d'abord le bilan chiffré, puis, si besoin, le reste
     for (const [k, kc] of [[1, .9], [1, .8], [.95, .78], [.9, .76], [.85, .74], [.8, .72], [.76, .7], [.72, .68], [.68, .65], [.64, .62], [.6, .58], [.55, .55], [.5, .5]]) { res = await build(k, kc); if (!res.over) break; }
     if (organi(asm).any) await orgPage(res.doc, c, asm);   // verso : organigramme
+    await groupesPages(res.doc, c, asm);                    // page 3 : groupes de prédication (document importé)
     return new Blob([await res.doc.save()], {type: 'application/pdf'});
   }
+  // Page 3 du bilan : le document « Groupes de prédication » de l'assemblée.
+  // PDF : ses pages sont reprises telles quelles (réduites pour tenir sur une page A4 paysage) ;
+  // Excel / Word : le tableau est redessiné.
+  async function groupesPages(doc, c, asm) {
+    const d = api.docs.list({asm, kind: 'groupes'}).sort((a, b) => b.date.localeCompare(a.date))[0]; if (!d) return;
+    const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
+    const blob = await docBlob(d.id);
+    const R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
+    const W = 841.89, H = 595.28, M = 26, ink = rgb(.12, .14, .16), mute = rgb(.42, .45, .5), blue = rgb(.12, .25, .4), grid = rgb(.78, .8, .84), head = rgb(.86, .93, .99);
+    const newPage = (n, tot) => { const pg = doc.addPage([W, H]);
+      pg.drawText(T(`Groupes de prédication — ${asm}${tot > 1 ? ` (${n}/${tot})` : ''}`), {x: M, y: H - M - 12, size: 15, font: B, color: blue});
+      pg.drawLine({start: {x: M, y: H - M - 19}, end: {x: W - M, y: H - M - 19}, thickness: .8, color: blue});
+      pg.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · d’après « ${d.name} » (importé le ${api.dateCourte(d.date)})`), {x: M, y: 12, size: 7, font: R, color: mute});
+      return pg; };
+    const top = H - M - 28, areaW = W - 2 * M, areaH = top - 26;
+    if (!blob) { const pg = newPage(1, 1); pg.drawText(T('Document pas encore reçu sur cet appareil : synchronisez puis générez de nouveau le bilan.'), {x: M, y: top - 20, size: 10, font: R, color: mute}); return; }
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (/pdf/.test(d.type) || /\.pdf$/i.test(d.name)) {
+      let emb = null;
+      try { const src = await PDFDocument.load(bytes, {ignoreEncryption: true}); emb = await doc.embedPdf(src, src.getPageIndices()); } catch { emb = null; }
+      if (emb) { emb.forEach((ep, i) => { const pg = newPage(i + 1, emb.length), k = Math.min(areaW / ep.width, areaH / ep.height, 1.6);
+        pg.drawPage(ep, {x: M + (areaW - ep.width * k) / 2, y: 26 + (areaH - ep.height * k) / 2, xScale: k, yScale: k}); }); return; }
+      // PDF protégé : image de chaque page
+      const base = document.baseURI, pdfjs = await import(new URL('lib/pdfjs/pdf.min.mjs', base).href);
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL('lib/pdfjs/pdf.worker.min.mjs', base).href;
+      const src = await pdfjs.getDocument({data: bytes, isEvalSupported: false}).promise;
+      for (let n = 1; n <= src.numPages; n++) {
+        const page = await src.getPage(n), vp = page.getViewport({scale: 2}), cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
+        await page.render({canvasContext: cv.getContext('2d'), viewport: vp}).promise;
+        const jpg = await doc.embedJpg(Uint8Array.from(atob(cv.toDataURL('image/jpeg', .9).split(',')[1]), ch => ch.charCodeAt(0)));
+        const pg = newPage(n, src.numPages), k = Math.min(areaW / jpg.width, areaH / jpg.height);
+        pg.drawImage(jpg, {x: M + (areaW - jpg.width * k) / 2, y: 26 + (areaH - jpg.height * k) / 2, width: jpg.width * k, height: jpg.height * k});
+      }
+      return;
+    }
+    // Excel / Word : tableau redessiné à partir des cases
+    let cells = [];
+    try { cells = (await App.files.readLayout(new File([blob], d.name, {type: d.type}))).flat(); } catch (e) { cells = []; }
+    if (!cells.length) { const pg = newPage(1, 1); pg.drawText(T('Lecture impossible de ce document (enregistrez-le en PDF, .xlsx ou .docx).'), {x: M, y: top - 20, size: 10, font: R, color: mute}); return; }
+    const ys = [...new Set(cells.map(x => x.y))].sort((a, b) => a - b), xs = [...new Set(cells.map(x => x.x))].sort((a, b) => a - b);
+    const tab = ys.map(y => xs.map(x => (cells.find(cc => cc.y === y && cc.x === x) || {}).text || ''));
+    const single = r => r.filter(Boolean).length <= 1;   // ligne de titre : déborde librement, n'élargit pas les colonnes
+    const colW1 = xs.map((_, j) => Math.max(14, ...tab.filter(r => !single(r)).map(r => R.widthOfTextAtSize(T(r[j]), 1))));   // largeur à la taille 1
+    const pad = 6, rowsPer = Math.ceil(ys.length / Math.max(1, Math.ceil(ys.length * 1.35 * 5 / areaH)));   // au moins 5 pt
+    const chunks = []; for (let i = 0; i < tab.length; i += rowsPer) chunks.push(tab.slice(i, i + rowsPer));
+    chunks.forEach((rows, ci) => {
+      const pg = newPage(ci + 1, chunks.length);
+      const f = Math.max(4.5, Math.min(10, (areaW - pad * xs.length) / colW1.reduce((a, b) => a + b, 0), areaH / (rows.length * 1.45)));
+      let cw = colW1.map(w => w * f + pad); const tot = cw.reduce((a, b) => a + b, 0); if (tot > areaW) cw = cw.map(w => w * areaW / tot);
+      const rh = f * 1.45; let y = top;
+      rows.forEach((r, ri) => {
+        let x = M; const first = ci === 0 && ri === 0;
+        if (first) pg.drawRectangle({x: M, y: y - rh, width: cw.reduce((a, b) => a + b, 0), height: rh, color: head});
+        const sg = single(r) && !!r[0];   // titre en première colonne
+        r.forEach((t, j) => { let s1 = T(t); const fnt = first || sg ? B : R;
+          let room = cw[j]; for (let k = j + 1; k < r.length && !r[k]; k++) room += cw[k];   // déborde sur les cases vides à droite
+          while (s1 && fnt.widthOfTextAtSize(s1, f) > room - 3) s1 = s1.slice(0, -2) + '…';
+          if (s1) pg.drawText(s1, {x: x + 2, y: y - rh + f * .4, size: f, font: fnt, color: ink}); x += cw[j]; });
+        pg.drawLine({start: {x: M, y: y - rh}, end: {x: x, y: y - rh}, thickness: .4, color: grid}); y -= rh;
+      });
+    });
+  }
+
   // Verso du bilan : organigramme en cases reliées (Collège des anciens → Comité de service → services supervisés)
   async function orgPage(doc, c, asm) {
     const {StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
