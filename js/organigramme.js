@@ -9,7 +9,7 @@ App.organigramme = (() => {
   const N = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’`]/g, "'");
   const RULES = [
     [/president/, null], [/equipe/, null], [/tresorier/, null], [/espaces? verts/, null], [/rapports?\b/, null],
-    [/qualifie|classe complementaire/, null], [/estrade|perches?\b/, null], [/bibliotheque|cyber|jw ?donate|publisher|\btps\b/, null],
+    [/qualifie|classe complementaire/, null], [/estrade|\bscene/, 'Scène'], [/\bmicros?\b|perches?\b/, 'Micros'], [/bibliotheque|cyber|jw ?donate|publisher|\btps\b/, null],
     [/nettoyage/, null], [/supervise/, null], [/specifique/, null], [/association|alctj/, null],
     [/discours/, 'Discours publics'],
     [/audio|video|\bsono/, 'Audio/vidéo'],
@@ -30,7 +30,7 @@ App.organigramme = (() => {
     [/^groupes?\b/, 'Resp. de groupe']
   ];
   const ROLES = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Conseiller adj.', 'Aumônier', 'CLH', 'Comité de gestion',
-    'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Entretien', 'Resp. de groupe'];
+    'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Micros', 'Scène', 'Entretien', 'Resp. de groupe'];
   const UNIQUE = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM'];
   // undefined : intitulé inconnu ; null : intitulé à ignorer ; sinon la responsabilité
   function canon(text) { const t = N(text).replace(/[«»"():]/g, ' ').replace(/\s+/g, ' ').trim(); if (!t) return undefined; for (const [re, r] of RULES) if (re.test(t)) return r; return undefined; }

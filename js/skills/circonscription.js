@@ -414,7 +414,7 @@ App.circo = (() => {
 
   // Organigramme : le Comité de service et les services que chacun supervise
   const SUPERVISION = [
-    {chef: 'CCA', titre: 'Coordinateur du collège des anciens', services: [['Accueil', 'Préposés à l’accueil'], ['Discours publics', 'Programme des discours publics'], ['Audio/vidéo', 'Équipe audio-vidéo']],
+    {chef: 'CCA', titre: 'Coordinateur du collège des anciens', services: [['Accueil', 'Préposés à l’accueil'], ['Discours publics', 'Programme des discours publics'], ['Audio/vidéo', 'Équipe audio-vidéo', [['Micros', 'Micros'], ['Scène', 'Scène']]]],
       aussi: 'Présidents du discours public et lecteurs de La Tour de Garde · communications à l’assemblée · audits des comptes'},
     {chef: 'Secrétaire', titre: 'Secrétaire', services: [['Comptes', 'Préposé aux comptes']], aussi: 'Questions liées aux assemblées régionales'},
     {chef: 'Resp. Prédication', titre: 'Responsable de la prédication', services: [['Publications', 'Préposé aux publications'], ['Territoires', 'Préposé aux territoires']], aussi: ''}];
@@ -422,7 +422,7 @@ App.circo = (() => {
   function organi(asm) {
     const mem = members(asm).filter(p => !['Radié', 'Démission'].includes(p.fonction));
     const who = r => ({main: mem.filter(p => (p.resp || []).includes(r)), adj: mem.filter(p => (p.resp || []).includes(r + ' adj.'))});
-    const blocks = SUPERVISION.map(b => ({...b, chefs: who(b.chef), svc: b.services.map(([r, l]) => ({r, l, ...who(r)}))}));
+    const blocks = SUPERVISION.map(b => ({...b, chefs: who(b.chef), svc: b.services.map(([r, l, sub]) => ({r, l, ...who(r), sub: (sub || []).map(([r2, l2]) => ({r: r2, l: l2, ...who(r2)}))}))}));
     const autres = AUTRES_RESP.map(r => ({r, ...who(r)})).filter(x => x.main.length || x.adj.length);
     const manque = [...blocks.filter(b => !b.chefs.main.length).map(b => b.titre), ...blocks.flatMap(b => b.svc.filter(x => !x.main.length).map(x => x.l))];
     const doublons = [...blocks.filter(b => b.chefs.main.length > 1).map(b => b.titre), ...['TG', 'VCM'].filter(r => who(r).main.length > 1)];
@@ -442,7 +442,7 @@ App.circo = (() => {
       ${o.blocks.map(b => `<div style="border:1px solid var(--line,#e2e4e8);border-radius:8px;padding:8px 10px;background:#f7fafd">
         <div class="small muted">${api.esc(b.titre)}</div><div style="font-weight:600;margin-bottom:6px">${who(b.chefs)}</div>
         <div class="small" style="margin-bottom:2px">Supervise :</div>
-        <ul class="small" style="margin:0 0 4px 16px;padding:0">${b.svc.map(x => `<li><span class="muted">${api.esc(x.l)} :</span> ${who(x)}</li>`).join('')}</ul>
+        <ul class="small" style="margin:0 0 4px 16px;padding:0">${b.svc.map(x => `<li><span class="muted">${api.esc(x.l)} :</span> ${who(x)}${x.sub.length ? `<ul style="margin:0 0 0 14px;padding:0">${x.sub.map(y => `<li><span class="muted">${api.esc(y.l)} :</span> ${y.main.length || y.adj.length ? who(y) : '<span class="muted">non renseigné</span>'}</li>`).join('')}</ul>` : ''}</li>`).join('')}</ul>
         ${b.aussi ? `<div class="small muted">Aussi : ${api.esc(b.aussi)}</div>` : ''}</div>`).join('')}
       </div>
       ${o.autres.length ? `<div class="small" style="margin-top:8px"><span class="muted">Autres responsabilités :</span> ${o.autres.map(x => `<strong>${api.esc(x.r)}</strong> ${who(x)}`).join(' · ')}</div>` : ''}${o.manque.length || o.doublons.length ? readBtn : ''}</div>`;
@@ -576,12 +576,14 @@ App.circo = (() => {
       if (r.e.statut === 'PP' && heures(r)) b.push(heures(r));
       if (eb(r)) b.push(`${eb(r)} EB`);
       return b; };
+    // Responsabilités abrégées pour le bilan PDF, dans l'ordre de la liste
+    const ABR = {'Comité de gestion': 'CG', 'Resp. Prédication': 'Prédication', 'Discours publics': 'DP', 'Audio/vidéo': 'Audio/Vidéo'};
+    const respAbr = p => [...(p.resp || [])].sort((a, b) => ((RESPS.indexOf(a.replace(/ adj\.$/, '')) + 1) || 99) - ((RESPS.indexOf(b.replace(/ adj\.$/, '')) + 1) || 99))
+      .map(x => { const adj = / adj\.$/.test(x), b = x.replace(/ adj\.$/, ''); return (ABR[b] || b) + (adj ? ' adj.' : ''); }).join(', ');
     const detail = (r, nomme) => {
       const bits = [];
-      // bilan PDF : responsabilités principales seulement (les services comme accueil, comptes, audio/vidéo restent visibles dans le tableau)
-      const PDF_RESP = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Conseiller adj.', 'Resp. de groupe', 'Aumônier', 'CLH', 'LDC', 'Télévolontaire', 'Comité de gestion'];
-      const rp = (r.p.resp || []).filter(x => PDF_RESP.includes(x.replace(/ adj\.$/, '')));
-      if (rp.length) bits.push(rp.join(', '));
+      // frères nommés : responsabilités sur leur propre ligne (dans la colonne des pionniers, seulement pour les non-nommés : LDC, télévolontaire…)
+      if (!nomme && !['Ancien', 'Assistant'].includes(fct(r.p)) && respAbr(r.p)) bits.push(respAbr(r.p));
       if (!nomme && fct(r.p) && !['Radié', 'Démission'].includes(fct(r.p))) bits.push(fct(r.p));
       if (nomme) bits.push(...activite(r));
       else { if (heures(r)) bits.push(heures(r)); if (eb(r)) bits.push(`${eb(r)} EB`); }
@@ -592,7 +594,7 @@ App.circo = (() => {
     // Un bloc par frère (avec son épouse sur la 2e ligne du même bloc) ou par pionnier
     const blocksOf = (l, nomme) => l.map((r, bi) => {
       const sp = nomme ? spouseOf(r.p) : null;
-      return {name: nm(r.p), d: detail(r, nomme), bi, hi: jauneOf(r), pid: r.p.id, sub: sp ? {name: `Épouse : ${sp.prenom || ''}`, d: activite(rowOf(sp)).join(' · '), pid: sp.id} : null};
+      return {name: nm(r.p), d: detail(r, nomme), resp: nomme ? respAbr(r.p) : '', bi, hi: jauneOf(r), pid: r.p.id, sub: sp ? {name: `Épouse : ${sp.prenom || ''}`, d: activite(rowOf(sp)).join(' · '), pid: sp.id} : null};
     });
     const linesOf = (l, nomme) => l.flatMap((r, bi) => {
       const out = [{name: nm(r.p), d: detail(r, nomme), bi, hi: jauneOf(r), pid: r.p.id}];
@@ -665,7 +667,11 @@ App.circo = (() => {
       const twoPh = withPhoto && all.some(bk => bk.sub && api.photos.get(bk.sub.pid));
       const phS = S(24), imgs = {};
       const photoOf = async pid => { const src = api.photos.get(pid); if (!src) return null; return imgs[pid] ??= await doc.embedJpg(Uint8Array.from(atob(src.split(',')[1]), ch => ch.charCodeAt(0))); };
-      const hOf = bk => !bk ? 0 : withPhoto ? Math.max(phS, bk.sub ? S(23) : 0) + S(3) : (bk.sub ? S(22) : lh);
+      const txOff = withPhoto ? (twoPh ? 2 * phS + S(6) : phS + S(4)) : 0, rl = S(9);
+      for (const bk of cols4.flat()) bk.respL = bk.resp ? wrap(bk.resp, cw - txOff - 4, fd) : [];
+      const hOf = bk => { if (!bk) return 0; const n = bk.respL.length;
+        if (!n) return withPhoto ? Math.max(phS, bk.sub ? S(23) : 0) + S(3) : (bk.sub ? S(22) : lh);
+        const content = S(12) + n * rl + (bk.sub ? S(10) : 0); return (withPhoto ? Math.max(phS, content) : content) + S(3); };
       // Chaque colonne se remplit indépendamment (pas de ligne vide quand une colonne a des blocs plus hauts)
       const colH = cols4.map(l => l.reduce((t, bk) => t + hOf(bk), 0)), totH = Math.max(lh, ...colH);
       need(totH);
@@ -685,7 +691,11 @@ App.circo = (() => {
           const wmax = cw - (tx - x0);
           const line = (t, d, yb, bold) => { const f1 = bold ? B : R, s1 = bold ? fs : fd; const n1 = fit(t, f1, s1, d ? wmax * .6 : wmax), w1 = f1.widthOfTextAtSize(n1, s1);
             txt(n1, tx, yb, {size: s1, bold, color: bold ? ink : mute}); if (d) txt(fit(d, R, fd, wmax - w1 - 5), tx + w1 + 4, yb, {size: fd, color: mute}); };
-          if (bk.sub) { line(bk.name, bk.d, yc - S(10), true); line(bk.sub.name, bk.sub.d, yc - S(20), false); }
+          if (bk.respL.length) {
+            line(bk.name, bk.d, yc - S(10), true); let yb = yc - S(10);
+            for (const l of bk.respL) { yb -= rl; txt(l, tx, yb, {size: fd, color: blue}); }
+            if (bk.sub) line(bk.sub.name, bk.sub.d, yb - S(10), false);
+          } else if (bk.sub) { line(bk.name, bk.d, yc - S(10), true); line(bk.sub.name, bk.sub.d, yc - S(20), false); }
           else line(bk.name, bk.d, withPhoto ? yc - hR / 2 - S(3) : yc - S(9), true);
           yc -= hR;
         }
@@ -765,7 +775,7 @@ App.circo = (() => {
     // Collège des anciens
     const mem = members(asm), fct = p => fonctionAt(c, p) ?? p.fonction;
     const nA = mem.filter(p => fct(p) === 'Ancien').length, nS = mem.filter(p => fct(p) === 'Assistant').length;
-    const head = box(W / 2 - 110, 76, 220, 'Collège des anciens', COL.vert, null, null, `${nA} ancien${nA > 1 ? 's' : ''} · ${nS} assistant${nS > 1 ? 's' : ''}`);
+    const head = box(W / 2 - 120, 76, 240, 'Comité de service', COL.vert, null, null, `Frères nommés : ${nA} ancien${nA > 1 ? 's' : ''} · ${nS} assistant${nS > 1 ? 's' : ''}`);
     // Comité de service (3 cases) au-dessus de leurs services (6 colonnes)
     const g = 12, sw = (W - 2 * M - 5 * g) / 6, slotX = i => M + i * (sw + g);
     const colors = [COL.orange, COL.bleu, COL.violet], spans = [[0, 3], [3, 1], [4, 2]];
@@ -782,6 +792,12 @@ App.circo = (() => {
       const [a] = spans[i], d = drawn[i], bar = svcTop - 15;
       const sv = ch.b.svc.map((x, k) => box(slotX(a + k), svcTop, sw, x.l.replace(/^Préposés? (aux?|à l’) ?/i, '').replace(/^Programme des /, ''), colors[i], x));
       svcBottom = Math.max(svcBottom, ...sv.map(v => v.bottom));
+      // sous-services (Micros, Scène sous l'équipe audio-vidéo) : en retrait, reliés par un rail
+      ch.b.svc.forEach((x, k) => { if (!x.sub.length) return;
+        const rx = slotX(a + k) + 8; let t = sv[k].bottom + 10, last = t;
+        for (const y2 of x.sub) { const sb = box(rx + 10, t, sw - 18, y2.l, colors[i], y2.main.length || y2.adj.length ? y2 : null, null, y2.main.length || y2.adj.length ? null : 'non renseigné');
+          line(rx, t + 9, rx + 10, t + 9, colors[i]); last = t + 9; t = sb.bottom + 8; svcBottom = Math.max(svcBottom, sb.bottom); }
+        line(rx, sv[k].bottom, rx, last, colors[i]); });
       line(d.cx, d.bottom, d.cx, bar, colors[i]);
       if (sv.length > 1) line(sv[0].cx, bar, sv.at(-1).cx, bar, colors[i]);
       sv.forEach(v => { line(v.cx, bar, v.cx, svcTop, colors[i]); if (sv.length === 1) line(d.cx, bar, v.cx, bar, colors[i]); });
@@ -922,7 +938,7 @@ App.circo = (() => {
   }
   const HEURES_MOIS = 50;
   const RESPS = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Conseiller adj.', 'Resp. de groupe', 'Aumônier', 'CLH', 'LDC', 'Télévolontaire',
-    'Comité de gestion', 'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Entretien'];
+    'Comité de gestion', 'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Micros', 'Scène', 'Entretien'];
   const suivi = c => (store().suivi ??= {})[c.id] ??= {};
   // Mois du cycle : A = septembre → février, B = mars → août
   function cycleStart(code) { const y = Number(code.slice(0, 4)); return /A$/.test(code) ? new Date(y - 1, 8, 1) : new Date(y, 2, 1); }
