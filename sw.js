@@ -1,11 +1,11 @@
 /* Service worker : met l'application en cache pour qu'elle fonctionne sans connexion.
    Ne contient jamais de données personnelles (elles sont dans IndexedDB, chiffrées). */
-const CACHE = 'mon-bureau-v0.19.2';
+const CACHE = 'mon-bureau-v0.20.0';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png',
-  'lib/pdf-lib.min.js', 'lib/pdfjs/pdf.min.mjs', 'lib/pdfjs/pdf.worker.min.mjs', 'js/core.js', 'js/files.js', 'js/pdf.js', 'js/sync.js', 'js/organigramme.js',
+  'lib/pdf-lib.min.js', 'lib/pdfjs/pdf.min.mjs', 'lib/pdfjs/pdf.worker.min.mjs', 'js/core.js', 'js/files.js', 'js/pdf.js', 'js/sync.js', 'js/organigramme.js', 'js/s13.js',
   'js/skills/accueil.js', 'js/skills/annuaire.js', 'js/skills/modeles.js', 'js/skills/coffre.js',
-  'js/skills/sauvegarde.js', 'js/skills/parametres.js', 'js/skills/gestion-skills.js', 'js/skills/circonscription.js', 'js/skills/a-venir.js'
+  'js/skills/sauvegarde.js', 'js/skills/parametres.js', 'js/skills/gestion-skills.js', 'js/skills/circonscription.js', 'js/skills/territoires.js', 'js/skills/a-venir.js'
 ];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

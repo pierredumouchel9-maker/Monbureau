@@ -475,7 +475,7 @@ App.files = (() => {
           }
         }
         for (const c of cells) c.text = c.text.replace(/\s+/g, ' ').trim();
-        pages.push(cells.filter(c => /[A-Za-zÀ-ÿ]/.test(c.text))); page.cleanup();
+        pages.push(cells.filter(c => /[A-Za-zÀ-ÿ0-9]/.test(c.text))); page.cleanup();
       }
       return pages;
     }
