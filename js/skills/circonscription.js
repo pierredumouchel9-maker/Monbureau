@@ -361,7 +361,8 @@ App.circo = (() => {
   // Documents joints à une assemblée (une seule version gardée par type ; stockés chiffrés à part, synchronisés un par un)
   const docKinds = () => { const pr = api.data.settings.profil || {};
     return [{k: 'organigramme', l: 'Organigramme'}, {k: 'groupes', l: 'Groupes de prédication', pl: true},
-      {k: 'progMoi', l: `Programme de prédication — ${pr.prenom || 'moi'}`, mail: true}, {k: 'progEpouse', l: `Programme de prédication — ${pr.epouse || 'mon épouse'}`, mail: true}]; };
+      {k: 'progMoi', l: `Programme de prédication — ${pr.prenom || 'moi'}`, mail: true}, {k: 'progEpouse', l: `Programme de prédication — ${pr.epouse || 'mon épouse'}`, mail: true},
+      {k: 'semaine', l: 'Programme de la semaine spéciale', mail: true}]; };
   const DOC_ACCEPT = '.pdf,.xlsx,.xls,.docx,.doc,application/pdf';
   const kSize = b => b > 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
   const docIcon = d => /pdf/.test(d.type) || /\.pdf$/i.test(d.name) ? '📕' : /sheet|excel/.test(d.type) || /\.xlsx?$/i.test(d.name) ? '📗' : /word/.test(d.type) || /\.docx?$/i.test(d.name) ? '📘' : '📄';
@@ -464,7 +465,8 @@ App.circo = (() => {
     const cand = mem.filter(p => rank(p) < 9 || p.fonction === 'Ancien').sort((a, b) => rank(a) - rank(b) || String(a.nom).localeCompare(String(b.nom), 'fr'));
     const qui = d.kind === 'progMoi' ? pr.prenom : d.kind === 'progEpouse' ? pr.epouse : '';
     const sujet = d.kind?.startsWith('prog') ? `Programme de prédication${qui ? ' de ' + qui : ''} — ${name}` : `${kl.l} — ${name}`;
-    const quoi = d.kind === 'progMoi' ? 'mon programme de prédication' : d.kind === 'progEpouse' ? `le programme de prédication${qui ? ' de ' + qui : ' de mon épouse'}` : `le document « ${kl.l} »`;
+    const quoi = d.kind === 'progMoi' ? 'mon programme de prédication' : d.kind === 'progEpouse' ? `le programme de prédication${qui ? ' de ' + qui : ' de mon épouse'}`
+      : d.kind === 'semaine' ? 'le programme de la semaine spéciale' : `le document « ${kl.l} »`;
     const corps = `Bonjour,\n\nVeuillez trouver ci-joint ${quoi} pour l’assemblée de ${name}.\n\nFraternellement,\n${[pr.prenom, pr.nom].filter(Boolean).join(' ')}`;
     const canShare = !!(navigator.canShare && navigator.canShare({files: [new File([blob], d.name, {type: blob.type})]}));
     const body = `<p class="small muted" style="margin-top:0">${docIcon(d)} <strong>${api.esc(d.name)}</strong> · ${kSize(d.size)}</p>
