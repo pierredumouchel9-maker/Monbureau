@@ -377,6 +377,13 @@ App.circo = (() => {
       <div style="margin-top:8px">${DOC_KINDS.map(row).join('')}</div>
       <p class="small muted" style="margin:6px 0 0">Seule la dernière version est gardée. Les documents sont chiffrés sur l’appareil et inclus dans les sauvegardes et la synchronisation.</p></div>`;
   }
+  // Document importé sur un autre appareil : on tente une synchronisation avant d'abandonner
+  async function docBlob(id) {
+    let blob = await api.docs.blob(id);
+    if (!blob && App.dropbox && await App.dropbox.connected()) { api.toast('Récupération du document depuis Dropbox…'); await App.dropbox.sync({quiet: true}); blob = await api.docs.blob(id); }
+    return blob;
+  }
+  const NOT_HERE = 'Document pas encore dans Dropbox : il a été importé sur un autre appareil. Ouvrez Mon Bureau sur cet appareil-là (Paramètres › Synchroniser maintenant), puis réessayez ici — ou importez de nouveau le fichier ici avec « Remplacer ».';
   function bindDocs(el, name, redraw) {
     for (const b of api.$$('[data-docadd]', el)) b.addEventListener('click', async () => {
       const kind = b.dataset.docadd, file = await api.pickFile(DOC_ACCEPT); if (!file) return;
@@ -391,8 +398,8 @@ App.circo = (() => {
     for (const b of api.$$('[data-docopen]', el)) b.addEventListener('click', () => {
       const d = api.docs.list().find(x => x.id === b.dataset.docopen); if (!d) return;
       const isPdf = /pdf/.test(d.type), win = isPdf ? window.open('about:blank', '_blank') : null;   // ouvert pendant le clic (Safari)
-      api.docs.blob(d.id).then(blob => {
-        if (!blob) { if (win) win.close(); return api.toast('Document pas encore reçu sur cet appareil : synchronisez puis réessayez.', 'error'); }
+      docBlob(d.id).then(blob => {
+        if (!blob) { if (win) win.close(); return api.toast(NOT_HERE, 'error'); }
         if (win) win.location = URL.createObjectURL(blob); else api.download(d.name, blob);
       }).catch(e => { if (win) win.close(); api.toast('Ouverture impossible : ' + e.message, 'error'); });
     });
@@ -446,7 +453,7 @@ App.circo = (() => {
     const d = api.docs.list().find(x => x.id === docId); if (!d) return;
     let res, freres;
     try {
-      const blob = await api.docs.blob(docId); if (!blob) return api.toast('Document pas encore reçu sur cet appareil : synchronisez puis réessayez.', 'error');
+      const blob = await docBlob(docId); if (!blob) return api.toast(NOT_HERE, 'error');
       if (/\.(xls|doc)$/i.test(d.name)) return api.toast('Ancien format Excel/Word (.xls/.doc) : enregistrez-le en .xlsx ou .docx, ou en PDF.', 'error');
       freres = members(name).filter(p => p.civilite !== 'Sœur');
       if (!freres.length) return api.toast(`Aucun frère de ${name} dans l’annuaire : importez d’abord la liste de l’assemblée.`, 'error');
