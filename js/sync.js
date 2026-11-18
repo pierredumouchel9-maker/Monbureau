@@ -96,19 +96,34 @@ App.dropbox = (() => {
     const r = await fetch('https://api.dropboxapi.com/2/files/delete_v2', {method: 'POST', headers: {Authorization: 'Bearer ' + await token(), 'Content-Type': 'application/json'}, body: JSON.stringify({path: docPath(id)})});
     if (!r.ok && r.status !== 409) throw new Error('Dropbox (suppression d’un document) : ' + r.status);
   }
-  // Avant la base : envoyer les documents ajoutés ici (pour qu'ils existent dans Dropbox quand la base y arrive)
-  async function pushDocs() {
-    const docs = api.data?.docs || {}, st = await getState(), up = new Set(st.docsUp || []);
-    let n = 0; for (const id of await App.docKeys()) if (docs[id] && !up.has(id)) { if (await uploadDoc(id)) { up.add(id); n++; } }
-    if (n) await setState({docsUp: [...up]});
+  // Documents réellement présents dans Dropbox (on vérifie à chaque fois, sans se fier à un état local)
+  async function listDocs() {
+    const out = new Set(); let r = await fetch('https://api.dropboxapi.com/2/files/list_folder', {method: 'POST', headers: {Authorization: 'Bearer ' + await token(), 'Content-Type': 'application/json'}, body: JSON.stringify({path: '/docs'})});
+    if (r.status === 409) return out;                       // dossier pas encore créé
+    for (;;) {
+      if (!r.ok) throw new Error('Dropbox (liste des documents) : ' + r.status);
+      const j = await r.json(); for (const e of j.entries || []) if (e['.tag'] === 'file' && /\.bin$/.test(e.name)) out.add(e.name.replace(/\.bin$/, ''));
+      if (!j.has_more) return out;
+      r = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {method: 'POST', headers: {Authorization: 'Bearer ' + await token(), 'Content-Type': 'application/json'}, body: JSON.stringify({cursor: j.cursor})});
+    }
   }
-  // Après accord sur la base : récupérer les documents manquants, effacer ceux qui ont été retirés
+  // Avant la base : envoyer tout document présent ici et absent de Dropbox (pour qu'il y soit quand la base arrive ailleurs)
+  async function pushDocs() {
+    const docs = api.data?.docs || {}, removed = api.data?.docsRemoved || {}, remote = await listDocs();
+    for (const id of await App.docKeys()) if (docs[id] && !removed[id] && !remote.has(id)) await uploadDoc(id);
+    return remote;
+  }
+  // Après accord sur la base : récupérer les documents manquants ; n'effacer que ceux retirés exprès (jamais par simple absence)
   async function pullDocs() {
-    const docs = api.data?.docs || {}, st = await getState(), up = new Set(st.docsUp || []), local = new Set(await App.docKeys());
-    for (const id of Object.keys(docs)) if (!local.has(id)) { const box = await downloadDoc(id); if (box) { await App.putDocBox(id, box); up.add(id); } }
-    for (const id of local) if (!docs[id]) await App.delDocBox(id);
-    for (const id of [...up]) if (!docs[id]) { await deleteDoc(id); up.delete(id); }
-    await setState({docsUp: [...up]});
+    const docs = api.data?.docs || {}, removed = api.data?.docsRemoved || {}, local = new Set(await App.docKeys()), remote = await listDocs();
+    for (const id of Object.keys(docs)) if (!local.has(id) && remote.has(id)) { const box = await downloadDoc(id); if (box) await App.putDocBox(id, box); }
+    for (const id of Object.keys(removed)) { if (local.has(id)) await App.delDocBox(id); if (remote.has(id)) await deleteDoc(id); }
+    for (const id of await App.docKeys()) if (docs[id] && !remote.has(id) && !removed[id]) await uploadDoc(id);   // rattrapage
+  }
+  // État des documents pour la carte des Paramètres
+  async function docsStatus() {
+    const docs = Object.keys(api.data?.docs || {}), local = new Set(await App.docKeys());
+    return {total: docs.length, missing: docs.filter(id => !local.has(id)).map(id => api.data.docs[id])};
   }
 
   /* ----- Synchronisation ----- */
@@ -182,6 +197,7 @@ App.dropbox = (() => {
     el.innerHTML = `<strong>Synchronisation entre vos appareils (Dropbox)</strong>
       <p class="small muted" style="margin:0">Les données sont envoyées <strong>déjà chiffrées</strong> avec votre mot de passe : Dropbox ne peut pas les lire. L’application n’accède qu’à son propre dossier dans votre Dropbox.</p>
       ${on ? `<p class="small" style="margin:0">✅ Connecté · dernière synchronisation : <strong>${fmt(st.lastSync)}</strong>${st.dirty ? ' · modifications en attente d’envoi' : ''}${st.error ? `<br><span style="color:var(--danger)">Dernier problème : ${api.esc(st.error)}</span>` : ''}</p>
+        <p class="small" style="margin:0" id="dbDocs"></p>
         <div class="row"><button class="btn primary" id="dbSync">Synchroniser maintenant</button><button class="btn" id="dbOff">Déconnecter</button></div>`
       : `<details class="small"><summary style="cursor:pointer"><strong>Créer l’accès Dropbox (une seule fois, sur un ordinateur)</strong></summary><ol style="margin:6px 0 0 18px;padding:0">
           <li>Ouvrez <strong>dropbox.com/developers/apps</strong> et connectez-vous à votre compte Dropbox.</li>
@@ -195,6 +211,9 @@ App.dropbox = (() => {
         <p class="small muted" style="margin:0">Sur chaque autre appareil (iPhone, Android…), restaurez d’abord une sauvegarde, puis connectez Dropbox avec la même App key.</p>`}`;
     if (on) {
       api.$('#dbSync', el).onclick = async () => { await sync(); card(el); };
+      docsStatus().then(d => { const p = api.$('#dbDocs', el); if (!p || !d.total) return;
+        p.innerHTML = !d.missing.length ? `📎 Documents joints : ${d.total}, tous présents sur cet appareil.`
+          : `<span style="color:var(--danger)">📎 ${d.missing.length} document${d.missing.length > 1 ? 's' : ''} sur ${d.total} pas encore sur cet appareil (${d.missing.map(m => api.esc((m.asm || '') + ' – ' + (m.name || ''))).join(', ')}). Ouvrez Mon Bureau sur l’appareil où ils ont été importés et touchez « Synchroniser maintenant ».</span>`; });
       api.$('#dbOff', el).onclick = async () => { if (await api.confirm('Déconnecter Dropbox', 'Cet appareil ne se synchronisera plus. Le fichier reste dans votre Dropbox.', 'Déconnecter', true)) { await disconnect(); card(el); } };
     } else {
       api.$('#dbGo', el).onclick = () => { const k = api.$('#dbKey', el).value.trim(); if (!k) return api.toast('Collez d’abord l’App key', 'error'); authStart(k); };

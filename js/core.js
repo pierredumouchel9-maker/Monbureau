@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.19.1';
+  const VERSION = '0.19.2';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -115,7 +115,7 @@ const App = (() => {
     },
     async available(id) { return !!(await kvGet('doc:' + id)); },
     async blob(id) { const box = await kvGet('doc:' + id); if (!box) return null; return new Blob([await openBytes(key, box)], {type: data.docs?.[id]?.type || 'application/octet-stream'}); },
-    async remove(id) { if (data.docs) delete data.docs[id]; await kv('readwrite', s => s.delete('doc:' + id)); save(); }
+    async remove(id) { if (data.docs) delete data.docs[id]; (data.docsRemoved ??= {})[id] = new Date().toISOString(); await kv('readwrite', s => s.delete('doc:' + id)); save(); }
   };
   // Accès bruts (déjà chiffrés) pour la synchronisation et la sauvegarde
   const docBox = id => kvGet('doc:' + id), putDocBox = (id, box) => kvSet('doc:' + id, box), delDocBox = id => kv('readwrite', s => s.delete('doc:' + id));
@@ -279,7 +279,11 @@ const App = (() => {
     const d = await open(key, file.data);
     clearTimeout(saveTimer); await saving.catch(() => {});
     await kv('readwrite', s => { s.put(file.data, 'data'); s.put(file.vault, 'vault'); if (file.photos) s.put(file.photos, 'photos'); else s.delete('photos'); });
+    // Un document présent ici mais absent de la version reçue (perdu lors d'un conflit) : on le garde, sauf s'il a été retiré exprès
+    const prev = data?.docs || {}, held = new Set(await docKeys()); let kept = 0;
     data = d; photos = null; vault.forget();
+    for (const [id, m] of Object.entries(prev)) if (held.has(id) && !data.docs?.[id] && !data.docsRemoved?.[id]) { (data.docs ??= {})[id] = m; kept++; }
+    if (kept) save();
     renderNav(); route();
   }
 
