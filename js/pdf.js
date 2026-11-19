@@ -129,7 +129,7 @@ App.pdf = (() => {
       const runs = blk.runs.slice();
       if (runs.length && runs.at(-1).br) runs.pop(); // un <br> final ne crée pas de ligne (convention des navigateurs)
       for (const r of runs) {
-        if (r.br) { lines.push([]); lineW = 0; continue; }
+        if (r.br) { lines.at(-1).hard = true; lines.push([]); lineW = 0; continue; }   // ligne finie par un retour : jamais justifiée
         for (const part of clean(r.text).split(/( )/)) if (part) pushWord(part, r);
       }
       for (let li = 0; li < lines.length; li++) {
@@ -141,7 +141,7 @@ App.pdf = (() => {
         if (blk.align === 'center') x += (width - total) / 2; else if (blk.align === 'right') x += width - total;
         if (li === 0 && blk.bullet) page.drawText(blk.bullet, {x: M + 4, y: y - size, size, font: fonts.r, color: rgb(0.12, 0.13, 0.16)});
         let gap = 0;
-        if (blk.align === 'justify' && li < lines.length - 1) { const spaces = line.filter(p => p.text === ' ').length; if (spaces) gap = (width - total) / spaces; }
+        if (blk.align === 'justify' && li < lines.length - 1 && !line.hard) { const spaces = line.filter(p => p.text === ' ').length; if (spaces) gap = (width - total) / spaces; }
         for (const p of line) {
           if (p.text !== ' ') page.drawText(p.text, {x, y: y - size, size, font: p.font, color: rgb(0.12, 0.13, 0.16)});
           x += p.w + (p.text === ' ' ? gap : 0);

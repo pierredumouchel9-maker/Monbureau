@@ -1,4 +1,9 @@
 'use strict';
+/* Champs de fusion « Semaine spéciale » (S-302, lettre au CCA) : fournis par l'itinéraire. */
+App.fields.register('visite', 'Semaine spéciale', [
+  {key: 'v_assemblee', label: 'Assemblée visitée'}, {key: 'v_coordinateur', label: 'Coordinateur (CCA)'},
+  {key: 'v_semaine', label: 'Dates de la semaine spéciale'}, {key: 'v_debut', label: 'Début (mardi)'}, {key: 'v_fin', label: 'Fin (dimanche)'}, {key: 'v_epouse', label: 'Prénom de mon épouse'}
+], ({visite: v}) => v ? {v_assemblee: v.assemblee, v_coordinateur: v.coordinateur, v_semaine: v.semaine, v_debut: v.debut, v_fin: v.fin, v_epouse: App.api.data?.settings?.profil?.epouse || ''} : {});
 /* Itinéraire : planning des semaines de l'année de service (visites, vacances, assemblées, semaines PP, formations…),
    avec suivi des formulaires (S-302, jw.org, courrier) et des tâches. Les dates se calculent semaine par semaine
    à partir du premier mardi : déplacer une ligne déplace la visite, les dates suivent. */
@@ -91,10 +96,12 @@ App.registerSkill({
     function render() {
       const L = store().annees.sort((a, b) => a.debut.localeCompare(b.debut)), A = current();
       el.innerHTML = `<div class="page-head"><div><h1>🗓️ Itinéraire</h1><p>Planning de l’année de service, semaine par semaine. Déplacez une ligne avec ↑ ↓ : les dates suivent.</p></div>
-        <div class="row" style="flex-wrap:wrap"><button class="btn" id="iImp">Importer un fichier Excel</button><button class="btn primary" id="iNew">Nouvelle année de service</button>${A ? '<button class="btn" id="iPdf">PDF</button>' : ''}</div></div>
+        <div class="row" style="flex-wrap:wrap"><button class="btn" id="iImp">Importer un fichier Excel</button><button class="btn" id="iLet" title="Reprendre la lettre au CCA de Publipostage.xlsm">Importer ma lettre au CCA</button>${A ? '<button class="btn" id="iLot">S-302 en lot</button>' : ''}<button class="btn primary" id="iNew">Nouvelle année de service</button>${A ? '<button class="btn" id="iPdf">PDF</button>' : ''}</div></div>
         ${L.length ? `<div class="row" style="gap:6px;margin-bottom:12px;flex-wrap:wrap">${L.map(a => `<button class="btn${a === A ? ' primary' : ''}" data-year="${a.id}">${api.esc(a.titre)}</button>`).join('')}</div>` : ''}
         ${A ? yearView(A) : `<div class="card"><p>Aucun itinéraire. Importez votre fichier Excel (une feuille par année, comme « 2027 A et B ») ou créez une nouvelle année de service.</p></div>`}`;
       api.$('#iImp', el).onclick = importXlsx;
+      api.$('#iLet', el).onclick = importLettre;
+      if (api.$('#iLot', el)) api.$('#iLot', el).onclick = () => lotS302(A);
       api.$('#iNew', el).onclick = newYear;
       for (const b of api.$$('[data-year]', el)) b.onclick = () => { state.id = b.dataset.year; render(); };
       if (A) bindYear(A);
@@ -136,7 +143,7 @@ App.registerSkill({
               <td><select data-f="type" style="min-width:140px">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}"${r.type === k ? ' selected' : ''}>${v.l}</option>`).join('')}</select></td>
               <td><input data-f="note" value="${api.esc(r.note || '')}" style="width:100%"></td>
               <td><input data-f="zone" value="${api.esc(r.zone || '')}" title="${api.esc(r.vacNom || '')}" style="width:110px"></td>
-              ${['s302', 'jw', 'cour'].map(k => `<td style="text-align:center"><input type="checkbox" data-c="${k}"${r[k] ? ' checked' : ''}></td>`).join('')}
+              ${['s302', 'jw', 'cour'].map(k => `<td style="text-align:center;white-space:nowrap"><input type="checkbox" data-c="${k}"${r[k] ? ' checked' : ''}>${k !== 'jw' && r.type === 'visite' ? `<button class="btn" data-doc="${k}" title="${k === 's302' ? 'Préparer le S-302' : 'Préparer la lettre au CCA'}" style="padding:2px 6px;margin-left:3px">📄</button>` : ''}</td>`).join('')}
               <td><div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input type="checkbox" data-c="fait"${r.fait ? ' checked' : ''} title="Fait"${r.tache ? '' : ' style="visibility:hidden"'}><input data-f="tache" value="${api.esc(r.tache || '')}" style="flex:1;min-width:160px;${r.fait ? 'text-decoration:line-through;opacity:.6' : ''}"></div></td>
               <td style="white-space:nowrap"><button class="btn" data-mv="-1" title="Monter">↑</button><button class="btn" data-mv="1" title="Descendre">↓</button><button class="btn" data-ins title="Insérer une semaine avant">＋</button><button class="btn" data-del title="Supprimer la semaine">✕</button></td></tr>`; }).join('')}
           </tbody></table></div>
@@ -162,6 +169,7 @@ App.registerSkill({
         for (const c of api.$$('[data-c]', tr)) c.onchange = () => { r[c.dataset.c] = c.checked; redraw(); };
         for (const b of api.$$('[data-mv]', tr)) b.onclick = () => { const i = +tr.dataset.i, j = i + Number(b.dataset.mv); if (j < 0 || j >= A.semaines.length) return; [A.semaines[i], A.semaines[j]] = [A.semaines[j], A.semaines[i]]; redraw(); };
         api.$('[data-ins]', tr).onclick = () => { A.semaines.splice(+tr.dataset.i, 0, blank()); redraw(); };
+        for (const b of api.$$('[data-doc]', tr)) b.onclick = () => docFlow(A, +tr.dataset.i, b.dataset.doc);
         api.$('[data-del]', tr).onclick = async () => { if (r.libelle && !(await api.confirm('Supprimer la semaine', `Supprimer « ${r.libelle} » ? Les semaines suivantes remontent d’une semaine.`, 'Supprimer', true))) return; A.semaines.splice(+tr.dataset.i, 1); redraw(); };
       }
     }
@@ -211,6 +219,100 @@ App.registerSkill({
       const A = {id: api.uid(), titre, debut: iso(debut), semaines}; L.push(A); state.id = A.id; api.save(); render();
       api.toast(`${titre} créée${last ? ' à partir de ' + last.titre + ' : ajustez l’ordre et les dates spéciales' : ''}. Recherche des vacances scolaires…`);
       if (await majVacances(A, false)) render();
+    }
+
+    /* ---------- S-302 et lettre au CCA (« Cour. ») ---------- */
+    const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+    const p2 = n => String(n).padStart(2, '0');
+    const semaineTexte = (a, b) => a.getFullYear() !== b.getFullYear() ? `${p2(a.getDate())} ${MOIS[a.getMonth()]} ${a.getFullYear()} au ${p2(b.getDate())} ${MOIS[b.getMonth()]} ${b.getFullYear()}`
+      : a.getMonth() !== b.getMonth() ? `${p2(a.getDate())} ${MOIS[a.getMonth()]} au ${p2(b.getDate())} ${MOIS[b.getMonth()]} ${b.getFullYear()}` : `${p2(a.getDate())} au ${p2(b.getDate())} ${MOIS[b.getMonth()]} ${b.getFullYear()}`;
+    const titleCase = s => String(s || '').toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+    function ccaOf(asm) {
+      const p = api.data.persons.find(x => ckey(x.assemblee || '') === ckey(asm) && (x.resp || []).includes('CCA'));
+      return p ? `frère ${p.prenom || ''} ${titleCase(p.nom)}`.replace(/\s+/g, ' ').trim() : '';
+    }
+    const visiteCtx = (r, w) => ({assemblee: r.asm || r.libelle, coordinateur: r.cca || ccaOf(r.asm) || 'frère …', semaine: semaineTexte(w.s, w.e), debut: w.s.toLocaleDateString('fr-FR'), fin: w.e.toLocaleDateString('fr-FR')});
+    const TPL = {
+      s302: {name: 'S-302 — Annonce de la visite', body: `<h2 style="text-align:center">ANNONCE DE LA VISITE DU RESPONSABLE DE CIRCONSCRIPTION</h2><p><br></p><p>Chers frères et sœurs,</p>
+<p style="text-align:justify">Veuillez noter les dates de la prochaine visite du responsable de circonscription. Une fois l’assemblée locale informée, cette note sera mise au tableau d’affichage.</p><p><br></p>
+<p>Assemblée locale : <b>{{v_assemblee}}</b></p><p>Responsable de circonscription : <b>{{exp_prenom}} {{exp_nom}}</b></p><p>Date de la visite : <b>{{v_semaine}}</b></p><p><br></p>
+<p style="text-align:right">Votre frère,</p><p style="text-align:right">{{exp_prenom}} {{exp_nom}}</p><p><br></p><p>S-302-F</p>`},
+      cour: {name: 'Lettre au CCA — semaine spéciale', body: `<p style="text-align:center"><b>{{exp_entete}}</b></p><p style="text-align:center">{{exp_prenom}} {{exp_nom}} ({{exp_fonction}}) – {{exp_telephone}} – {{exp_email}}</p><p><br></p>
+<p style="text-align:right">Le {{date_jour}}</p><p><b>Objet : semaine spéciale dans l’assemblée de {{v_assemblee}}</b></p><p><br></p><p>Cher {{v_coordinateur}},</p>
+<p style="text-align:justify">C’est avec beaucoup de plaisir que nous vous retrouverons lors de la semaine spéciale qui aura lieu du :</p><p style="text-align:center"><b>{{v_semaine}}</b></p>
+<h3>1. Réunions pour la prédication</h3><ul><li>Mercredi : …</li><li>Jeudi : …</li><li>Vendredi : …</li><li>Samedi : …</li><li>Dimanche : …</li></ul>
+<h3>2. Programme de prédication</h3><p>…</p><h3>3. Visites pastorales</h3><p>…</p><h3>4. Programme des réunions</h3><p>…</p><h3>5. Logement</h3><p>…</p><h3>6. Repas</h3><p>…</p><h3>7. Examen des dossiers</h3><p>…</p>
+<p><br></p><p>Ton compagnon de service,</p><p style="text-align:right">{{exp_prenom}} {{exp_nom}}</p><p style="text-align:right">{{exp_fonction}}</p>`}};
+    function ensureTpl(kind) {
+      let t = api.data.templates.find(x => x.role === 'itin-' + kind);
+      if (!t) { t = {id: api.uid(), role: 'itin-' + kind, name: TPL[kind].name, category: 'Semaine spéciale', body: TPL[kind].body, updated: new Date().toISOString()}; api.data.templates.push(t); api.save(); }
+      return t;
+    }
+    // Reprend la lettre au CCA du classeur Publipostage.xlsm (onglet « Lettre_CCA ») comme modèle modifiable
+    async function importLettre() {
+      const file = await api.pickFile('.xlsm,.xlsx'); if (!file) return;
+      let sheets; try { sheets = await App.files.readXlsx(file); } catch (e) { return api.toast('Lecture impossible : ' + e.message, 'error'); }
+      const sh = sheets.find(x => /lettre/i.test(x.name)); if (!sh) return api.toast('Onglet « Lettre_CCA » introuvable dans ce classeur.', 'error');
+      const F = t => api.esc(String(t)).replace(/«\s*Coordinateur\s*»/gi, '{{v_coordinateur}}').replace(/«\s*SEMAINE_SPECIALE\s*»/gi, '{{v_semaine}}').replace(/«\s*ASSEMBLEES?\s*»/gi, '{{v_assemblee}}').replace(/\n/g, '<br>');
+      const out = []; let ul = [], notes = [];
+      const flush = () => { if (ul.length) out.push(`<ul>${ul.map(x => `<li>${x}</li>`).join('')}</ul>`); for (const n of notes) out.push(`<p><i>${n}</i></p>`); ul = []; notes = []; };
+      sh.rows.forEach((row, ri) => {
+        const cells = row.map(v => typeof v === 'string' ? v.trim() : v).filter(v => v !== '' && v !== null && v !== undefined);
+        if (!cells.length) { flush(); return; }
+        const a = String(row[0] ?? '').trim(), txt = cells.filter(v => typeof v === 'string');
+        if (/^⚫|^●|^•/.test(a)) {   // puce : colonnes B-C ; une remarque placée plus à droite devient une note sous la liste
+          const main = row.slice(1, 4).filter(v => String(v ?? '').trim()).map(String), rest = row.slice(4).filter(v => typeof v === 'string' && v.trim());
+          ul.push(F(main.join(' '))); notes.push(...rest.map(F)); return; }
+        flush();
+        if (txt.length === 1 && txt[0] === 'Le') return out.push('<p style="text-align:right">Le {{date_jour}}</p>');
+        if (/^\d+\.\s/.test(a)) return out.push(`<h3>${F(txt.join(' '))}</h3>`);
+        if (ri < 2) return out.push(`<p style="text-align:center"><b>${F(txt.join(' '))}</b></p>`);
+        if (!String(row[0] ?? '').trim() && String(row[2] ?? '').trim() && txt.length === 1) return out.push(`<p style="text-align:right">${F(txt[0])}</p>`);
+        out.push(`<p style="text-align:justify">${F(txt.join(' '))}</p>`);
+      });
+      flush();
+      if (!out.length) return api.toast('Lettre vide.', 'error');
+      const t = ensureTpl('cour'); t.body = out.join('\n'); t.updated = new Date().toISOString(); api.save();
+      api.toast('Lettre au CCA reprise du classeur : modifiable dans Modèles › « Lettre au CCA — semaine spéciale ».');
+    }
+    async function docFlow(A, i, kind) {
+      const r = A.semaines[i], w = weekOf(A, i), tpl = ensureTpl(kind), ctx = visiteCtx(r, w);
+      const merged = () => App.pdf.merge(tpl.body, App.fields.values({visite: ctx}));
+      const lbl = kind === 's302' ? 'S-302' : 'Lettre au CCA', flag = kind === 's302' ? 's302' : 'cour';
+      const fileName = App.pdf.fileName(`${kind === 's302' ? 'S-302' : 'Lettre CCA'} ${ctx.assemblee} ${w.s.toLocaleDateString('fr-FR').replace(/\//g, '-')}`) + '.pdf';
+      const body = `<p class="small muted" style="margin-top:0">${api.esc(ctx.assemblee)} · semaine du ${api.esc(ctx.semaine)}${kind === 'cour' ? ` · coordinateur : ${api.esc(ctx.coordinateur)}` : ''}${r.docs?.[kind] ? ' · <strong>version modifiée pour cette visite</strong>' : ''}</p>
+        <div id="dEd" contenteditable="true" style="border:1px solid var(--line,#ddd);border-radius:8px;padding:28px 34px;background:#fff;max-height:58vh;overflow:auto;font-family:Helvetica,Arial,sans-serif;font-size:11pt;line-height:1.35">${r.docs?.[kind] || merged()}</div>
+        <p class="small muted" style="margin:6px 0 0">Modifiez directement le texte pour cette visite. Le modèle commun se modifie dans Modèles › « ${api.esc(tpl.name)} ».</p>`;
+      const keep = el => { (r.docs ??= {})[kind] = api.$('#dEd', el).innerHTML; api.save(); };
+      const blobOf = async el => new Blob([await App.pdf.render(api.$('#dEd', el).innerHTML, {title: lbl})], {type: 'application/pdf'});
+      await api.modal({title: `${lbl} — ${ctx.assemblee}`, body, wide: true, actions: [
+        {label: 'Fermer', value: null, onClick: el => { if (api.$('#dEd', el).innerHTML !== (r.docs?.[kind] || merged())) keep(el); }},
+        {label: 'Revenir au modèle', onClick: el => { api.$('#dEd', el).innerHTML = merged(); if (r.docs) delete r.docs[kind]; api.save(); return false; }},
+        {label: 'PDF', onClick: async el => { keep(el); api.download(fileName, await blobOf(el)); return false; }},
+        {label: 'Envoyer par mail…', onClick: async el => { keep(el); const blob = await blobOf(el);
+          await App.mailer.open({asm: r.asm, blob, fileName, defaults: kind === 's302' ? ['CCA', 'Secrétaire'] : ['CCA'],
+            subject: kind === 's302' ? `Annonce de la visite du responsable de circonscription — ${ctx.semaine}` : `Semaine spéciale du ${ctx.semaine} — ${ctx.assemblee}`,
+            body: `Bonjour${kind === 'cour' ? ' ' + ctx.coordinateur.replace(/^frère\s+/, '') : ''},\n\nVeuillez trouver ci-joint ${kind === 's302' ? 'l’annonce de la prochaine visite du responsable de circonscription (S-302)' : 'les informations pour l’organisation de la semaine spéciale'}.\n\nFraternellement,\n${[api.data.settings.profil?.prenom, api.data.settings.profil?.nom].filter(Boolean).join(' ')}`});
+          if (!r[flag] && await api.confirm(lbl, `Cocher « ${kind === 's302' ? 'S-302' : 'Cour.'} » pour ${ctx.assemblee} ?`, 'Cocher')) { r[flag] = true; api.save(); render(); }
+          return false; }},
+        {label: `Valider et cocher « ${kind === 's302' ? 'S-302' : 'Cour.'} »`, kind: 'primary', onClick: el => { keep(el); r[flag] = true; api.save(); return 'ok'; }}]});
+      render();
+    }
+    async function lotS302(A) {
+      const rows = A.semaines.map((r, i) => ({r, i, w: weekOf(A, i)})).filter(x => x.r.type === 'visite' && x.r.asm && x.w.e >= today());
+      if (!rows.length) return api.toast('Aucune visite à venir dans cette année.', 'error');
+      const ids = await api.modal({title: 'S-302 en lot', body: `<p class="small muted" style="margin-top:0">Un PDF par visite, regroupés dans un ZIP. Les visites dont le S-302 n’est pas encore coché sont présélectionnées.</p>
+        <div style="max-height:360px;overflow:auto">${rows.map(x => `<label class="row small" style="gap:6px;padding:2px 0"><input type="checkbox" value="${x.i}" ${x.r.s302 ? '' : 'checked'}> sem. ${x.w.n} · ${dd(x.w.s)} – ${dd(x.w.e)} · <strong>${api.esc(x.r.asm)}</strong>${x.r.s302 ? ' <span class="muted">(déjà fait)</span>' : ''}</label>`).join('')}</div>
+        <label class="row small" style="margin-top:8px;gap:6px"><input type="checkbox" id="lCheck" checked> Cocher « S-302 » pour les visites générées</label>`,
+        actions: [{label: 'Annuler', value: null}, {label: 'Générer le ZIP', kind: 'primary', onClick: el => { const v = api.$$('input[value]:checked', el).map(x => +x.value); return v.length ? {v, mark: api.$('#lCheck', el).checked} : false; }}]});
+      if (!ids) return;
+      const tpl = ensureTpl('s302'), entries = [];
+      for (const i of ids.v) { const r = A.semaines[i], w = weekOf(A, i), ctx = visiteCtx(r, w);
+        const html = r.docs?.s302 || App.pdf.merge(tpl.body, App.fields.values({visite: ctx}));
+        entries.push({name: App.pdf.fileName(`S-302 ${ctx.assemblee} ${w.s.toLocaleDateString('fr-FR').replace(/\//g, '-')}`) + '.pdf', bytes: await App.pdf.render(html, {title: 'S-302'})});
+        if (ids.mark) r.s302 = true; }
+      api.download(`S-302 ${A.titre}.zip`, App.files.zip(entries)); api.save(); render();
+      api.toast(`${entries.length} S-302 générés`);
     }
 
     async function pdf(A) {
