@@ -96,11 +96,12 @@ App.registerSkill({
     function render() {
       const L = store().annees.sort((a, b) => a.debut.localeCompare(b.debut)), A = current();
       el.innerHTML = `<div class="page-head"><div><h1>🗓️ Itinéraire</h1><p>Planning de l’année de service, semaine par semaine. Déplacez une ligne avec ↑ ↓ : les dates suivent.</p></div>
-        <div class="row" style="flex-wrap:wrap"><button class="btn" id="iImp">Importer un fichier Excel</button><button class="btn" id="iLet" title="Reprendre la lettre au CCA de Publipostage.xlsm">Importer ma lettre au CCA</button>${A ? '<button class="btn" id="iLot">S-302 en lot</button>' : ''}<button class="btn primary" id="iNew">Nouvelle année de service</button>${A ? '<button class="btn" id="iPdf">PDF</button>' : ''}</div></div>
+        <div class="row" style="flex-wrap:wrap"><button class="btn" id="iImp">Importer un fichier Excel</button><button class="btn" id="iLet" title="Reprendre la lettre au CCA de Publipostage.xlsm">Importer ma lettre au CCA</button><button class="btn" id="iS302" title="Formulaire S-302 officiel (PDF à remplir)">${s302Doc() ? 'S-302 officiel ✓' : 'Importer le S-302 officiel'}</button>${A ? '<button class="btn" id="iLot">S-302 en lot</button>' : ''}<button class="btn primary" id="iNew">Nouvelle année de service</button>${A ? '<button class="btn" id="iPdf">PDF</button>' : ''}</div></div>
         ${L.length ? `<div class="row" style="gap:6px;margin-bottom:12px;flex-wrap:wrap">${L.map(a => `<button class="btn${a === A ? ' primary' : ''}" data-year="${a.id}">${api.esc(a.titre)}</button>`).join('')}</div>` : ''}
         ${A ? yearView(A) : `<div class="card"><p>Aucun itinéraire. Importez votre fichier Excel (une feuille par année, comme « 2027 A et B ») ou créez une nouvelle année de service.</p></div>`}`;
       api.$('#iImp', el).onclick = importXlsx;
       api.$('#iLet', el).onclick = importLettre;
+      api.$('#iS302', el).onclick = importS302Form;
       if (api.$('#iLot', el)) api.$('#iLot', el).onclick = () => lotS302(A);
       api.$('#iNew', el).onclick = newYear;
       for (const b of api.$$('[data-year]', el)) b.onclick = () => { state.id = b.dataset.year; render(); };
@@ -169,7 +170,7 @@ App.registerSkill({
         for (const c of api.$$('[data-c]', tr)) c.onchange = () => { r[c.dataset.c] = c.checked; redraw(); };
         for (const b of api.$$('[data-mv]', tr)) b.onclick = () => { const i = +tr.dataset.i, j = i + Number(b.dataset.mv); if (j < 0 || j >= A.semaines.length) return; [A.semaines[i], A.semaines[j]] = [A.semaines[j], A.semaines[i]]; redraw(); };
         api.$('[data-ins]', tr).onclick = () => { A.semaines.splice(+tr.dataset.i, 0, blank()); redraw(); };
-        for (const b of api.$$('[data-doc]', tr)) b.onclick = () => docFlow(A, +tr.dataset.i, b.dataset.doc);
+        for (const b of api.$$('[data-doc]', tr)) b.onclick = () => b.dataset.doc === 's302' && s302Doc() ? s302Flow(A, +tr.dataset.i) : docFlow(A, +tr.dataset.i, b.dataset.doc);
         api.$('[data-del]', tr).onclick = async () => { if (r.libelle && !(await api.confirm('Supprimer la semaine', `Supprimer « ${r.libelle} » ? Les semaines suivantes remontent d’une semaine.`, 'Supprimer', true))) return; A.semaines.splice(+tr.dataset.i, 1); redraw(); };
       }
     }
@@ -275,6 +276,55 @@ App.registerSkill({
       const t = ensureTpl('cour'); t.body = out.join('\n'); t.updated = new Date().toISOString(); api.save();
       api.toast('Lettre au CCA reprise du classeur : modifiable dans Modèles › « Lettre au CCA — semaine spéciale ».');
     }
+    /* S-302 officiel : le PDF du formulaire (importé une fois par l'utilisateur, gardé chiffré) est rempli champ par champ, au format d'origine. */
+    const s302Doc = () => api.docs.list({kind: 's302form'}).sort((a, b) => b.date.localeCompare(a.date))[0];
+    async function importS302Form() {
+      const file = await api.pickFile('.pdf,application/pdf'); if (!file) return;
+      try { const d = await window.PDFLib.PDFDocument.load(new Uint8Array(await file.arrayBuffer()), {ignoreEncryption: true}); if (d.getForm().getFields().filter(f => f.constructor.name === 'PDFTextField' || f.setText).length < 3) throw new Error('ce PDF n’a pas les champs du S-302'); }
+      catch (e) { return api.toast('Formulaire non reconnu : ' + e.message, 'error'); }
+      const old = api.docs.list({kind: 's302form'}); await api.docs.add(file, {kind: 's302form', asm: ''}); for (const d of old) await api.docs.remove(d.id);
+      api.toast('Formulaire S-302 officiel enregistré : il sera rempli automatiquement.'); render();
+    }
+    const s302Values = (r, w) => { const pr = api.data.settings.profil || {}, rc = [pr.prenom, (pr.nom || '').toUpperCase()].filter(Boolean).join(' ');
+      return {asm: r.asm || r.libelle, rc, date: semaineTexte(w.s, w.e), sig: rc, ...(r.docs?.s302f || {})}; };
+    async function fillS302(v) {
+      const d = s302Doc(); const blob = d && await api.docs.blob(d.id); if (!blob) throw new Error('formulaire S-302 pas encore reçu sur cet appareil (synchronisez)');
+      const {PDFDocument, StandardFonts, PDFName, rgb} = window.PDFLib, doc = await PDFDocument.load(new Uint8Array(await blob.arrayBuffer()), {ignoreEncryption: true});
+      const helv = await doc.embedFont(StandardFonts.Helvetica), page = doc.getPage(0);
+      const fields = doc.getForm().getFields().filter(f => typeof f.setText === 'function')
+        .map(f => ({w: f.acroField.getWidgets()[0]})).map(x => ({r: x.w.getRectangle(), center: x.w.dict.get(PDFName.of('Q'))?.toString() === '1'}))
+        .sort((a, b) => b.r.y - a.r.y);   // de haut en bas : assemblée, responsable, date, signature
+      // Le texte est écrit sur les pointillés du formulaire, puis les champs sont retirés (document final, non modifiable)
+      [v.asm, v.rc, v.date, v.sig].forEach((t, k) => { const x = fields[k]; if (!x) return; const txt = App.pdf.clean(String(t || '')); if (!txt) return;
+        let sz = k === 3 ? 12 : 10; while (sz > 6 && helv.widthOfTextAtSize(txt, sz) > x.r.width - 6) sz -= .5;
+        const tw = helv.widthOfTextAtSize(txt, sz), tx = x.center || k === 3 ? x.r.x + (x.r.width - tw) / 2 : x.r.x + 3;
+        page.drawText(txt, {x: tx, y: x.r.y + (x.r.height - sz) / 2 + 1.5, size: sz, font: helv, color: rgb(0, 0, 0)}); });
+      page.node.delete(PDFName.of('Annots')); doc.catalog.delete(PDFName.of('AcroForm'));
+      return doc.save();
+    }
+    async function s302Flow(A, i) {
+      const r = A.semaines[i], w = weekOf(A, i), v = s302Values(r, w);
+      const fileName = App.pdf.fileName(`S-302 ${v.asm} ${w.s.toLocaleDateString('fr-FR').replace(/\//g, '-')}`) + '.pdf';
+      const body = `<p class="small muted" style="margin-top:0">Formulaire S-302 officiel, rempli au format d’origine. Modifiez un champ si besoin (pour cette visite).</p>
+        <label class="field"><span>Assemblée locale</span><input id="fA" value="${api.esc(v.asm)}"></label>
+        <label class="field"><span>Responsable de circonscription</span><input id="fR" value="${api.esc(v.rc)}"></label>
+        <label class="field"><span>Date de la visite</span><input id="fD" value="${api.esc(v.date)}"></label>
+        <label class="field"><span>Signature (sous « Votre frère, »)</span><input id="fS" value="${api.esc(v.sig)}"></label>`;
+      const read = el => ({asm: api.$('#fA', el).value, rc: api.$('#fR', el).value, date: api.$('#fD', el).value, sig: api.$('#fS', el).value});
+      const keep = el => { const x = read(el), base = s302Values({...r, docs: {}}, w), diff = Object.fromEntries(Object.entries(x).filter(([k, val]) => val !== base[k]));
+        (r.docs ??= {}).s302f = diff; api.save(); return x; };
+      const blobOf = async el => new Blob([await fillS302(keep(el))], {type: 'application/pdf'});
+      await api.modal({title: `S-302 — ${v.asm}`, body, actions: [
+        {label: 'Fermer', value: null, onClick: el => { keep(el); }},
+        {label: 'PDF', onClick: async el => { try { api.download(fileName, await blobOf(el)); } catch (e) { api.toast(e.message, 'error'); } return false; }},
+        {label: 'Envoyer par mail…', onClick: async el => { let blob; try { blob = await blobOf(el); } catch (e) { api.toast(e.message, 'error'); return false; }
+          const x = read(el); await App.mailer.open({asm: r.asm, blob, fileName, defaults: ['CCA', 'Secrétaire'], subject: `Annonce de la visite du responsable de circonscription — ${x.date}`,
+            body: `Bonjour,\n\nVeuillez trouver ci-joint l’annonce de la prochaine visite du responsable de circonscription (S-302), du ${x.date}.\n\nFraternellement,\n${x.rc}`});
+          if (!r.s302 && await api.confirm('S-302', `Cocher « S-302 » pour ${x.asm} ?`, 'Cocher')) { r.s302 = true; api.save(); }
+          return false; }},
+        {label: 'Valider et cocher « S-302 »', kind: 'primary', onClick: el => { keep(el); r.s302 = true; api.save(); return 'ok'; }}]});
+      render();
+    }
     async function docFlow(A, i, kind) {
       const r = A.semaines[i], w = weekOf(A, i), tpl = ensureTpl(kind), ctx = visiteCtx(r, w);
       const merged = () => App.pdf.merge(tpl.body, App.fields.values({visite: ctx}));
@@ -308,8 +358,10 @@ App.registerSkill({
       if (!ids) return;
       const tpl = ensureTpl('s302'), entries = [];
       for (const i of ids.v) { const r = A.semaines[i], w = weekOf(A, i), ctx = visiteCtx(r, w);
-        const html = r.docs?.s302 || App.pdf.merge(tpl.body, App.fields.values({visite: ctx}));
-        entries.push({name: App.pdf.fileName(`S-302 ${ctx.assemblee} ${w.s.toLocaleDateString('fr-FR').replace(/\//g, '-')}`) + '.pdf', bytes: await App.pdf.render(html, {title: 'S-302'})});
+        let bytes;
+        if (s302Doc()) { try { bytes = await fillS302(s302Values(r, w)); } catch (e) { return api.toast(e.message, 'error'); } }
+        else bytes = await App.pdf.render(r.docs?.s302 || App.pdf.merge(tpl.body, App.fields.values({visite: ctx})), {title: 'S-302'});
+        entries.push({name: App.pdf.fileName(`S-302 ${ctx.assemblee} ${w.s.toLocaleDateString('fr-FR').replace(/\//g, '-')}`) + '.pdf', bytes});
         if (ids.mark) r.s302 = true; }
       api.download(`S-302 ${A.titre}.zip`, App.files.zip(entries)); api.save(); render();
       api.toast(`${entries.length} S-302 générés`);
