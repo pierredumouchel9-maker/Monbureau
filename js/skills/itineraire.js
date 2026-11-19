@@ -139,7 +139,8 @@ App.registerSkill({
           <datalist id="iList">${[...names, ...SPECIALS].map(n => `<option value="${api.esc(n)}">`).join('')}</datalist>
           <div class="table-wrap" style="max-height:70vh;margin-top:8px"><table class="list" style="font-size:.9rem"><thead><tr><th>Sem.</th><th>Du – au</th><th style="min-width:260px">Itinéraire</th><th>Type</th><th style="min-width:180px">Remarques</th><th>Vacances</th><th title="S-302">S-302</th><th title="jw.org">jw.org</th><th title="Courrier">Cour.</th><th style="min-width:200px">Tâche</th><th></th></tr></thead><tbody>
           ${A.semaines.map((r, i) => { const w = weekOf(A, i), now = t >= add(w.s, -1) && t <= w.e, bg = TYPES[r.type]?.bg || '#fff';
-            return `<tr data-i="${i}" style="background:${bg};${now ? 'outline:2px solid var(--accent,#2f6fd6);' : ''}">
+            const h = halfOf(w.s), sep = i === 0 || halfOf(weekOf(A, i - 1).s) !== h;   // séparation entre les deux cycles
+            return `${sep ? `<tr class="cyc-sep"><td colspan="11" style="background:#1f3f66;color:#fff;font-weight:600;padding:6px 10px;${i ? 'border-top:4px solid #fff' : ''}">Cycle ${api.esc(cycleName(A, h))} — ${h === 'A' ? 'septembre à février' : 'mars à août'}</td></tr>` : ''}<tr data-i="${i}" style="background:${bg};${now ? 'outline:2px solid var(--accent,#2f6fd6);' : ''}">
               <td><strong>${w.n}</strong></td><td class="small" style="white-space:nowrap">${dd(w.s)} – ${dd(w.e)}</td>
               <td><input list="iList" data-f="libelle" value="${api.esc(r.libelle)}" style="width:100%;font-weight:${isV(r.type) ? 600 : 400}">${isV(r.type) && !r.asm ? '<div class="small" style="color:var(--danger,#c00)">assemblée non reconnue</div>' : ''}</td>
               <td><select data-f="type" style="min-width:140px">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}"${r.type === k ? ' selected' : ''}>${v.l}</option>`).join('')}</select></td>
@@ -442,12 +443,18 @@ App.registerSkill({
       page.drawText(T('Itinéraire ' + A.titre), {x: M, y: H - M - 14, size: 16, font: B, color: rgb(.12, .25, .4)});
       const cols = [['Sem.', 24], ['Du – au', 58], ['Itinéraire', 200], ['Remarques', 125], ['Vacances', 50], ['S-302', 28], ['jw', 22], ['Cour.', 0]];
       cols[cols.length - 1][1] = W - 2 * M - cols.slice(0, -1).reduce((a, c) => a + c[1], 0);
-      const rh = Math.min(13.5, (H - 2 * M - 50) / (A.semaines.length + 1)), fs = Math.min(8, rh * .62);
+      const nSep = A.semaines.filter((_, i) => i === 0 || halfOf(weekOf(A, i - 1).s) !== halfOf(weekOf(A, i).s)).length;
+      const rh = Math.min(13.5, (H - 2 * M - 50) / (A.semaines.length + 1 + nSep)), fs = Math.min(8, rh * .62);
       let y = H - M - 34, x = M;
       for (const [l, w] of cols) { page.drawText(T(l), {x: x + 2, y: y - rh + 4, size: fs, font: B, color: ink}); x += w; }
       y -= rh; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .8, color: ink});
       A.semaines.forEach((r, i) => {
-        const w = weekOf(A, i), bg = TYPES[r.type]?.bg || '#ffffff';
+        const w = weekOf(A, i), bg = TYPES[r.type]?.bg || '#ffffff', h = halfOf(w.s);
+        if (i === 0 || halfOf(weekOf(A, i - 1).s) !== h) {   // bandeau de séparation entre les cycles
+          page.drawRectangle({x: M, y: y - rh, width: W - 2 * M, height: rh, color: rgb(.12, .25, .4)});
+          page.drawText(T(`Cycle ${cycleName(A, h)} — ${h === 'A' ? 'septembre à février' : 'mars à août'}`), {x: M + 4, y: y - rh + 4, size: fs, font: B, color: rgb(1, 1, 1)});
+          y -= rh;
+        }
         if (bg !== '#ffffff') page.drawRectangle({x: M, y: y - rh, width: W - 2 * M, height: rh, color: hex(bg)});
         const vals = [String(w.n), `${dd(w.s)} – ${dd(w.e)}`, r.libelle, r.note, r.zone, r.s302 ? 'X' : '', r.jw ? 'X' : '', r.cour ? 'X' : ''];
         x = M; vals.forEach((v, j) => { let s = T(v); const f = j === 2 && !isV(r.type) ? B : R; while (s.length > 1 && f.widthOfTextAtSize(s, fs) > cols[j][1] - 4) s = s.slice(0, -2) + '…'; if (s) page.drawText(s, {x: x + 2, y: y - rh + 4, size: fs, font: f, color: j === 3 ? mute : ink}); x += cols[j][1]; });
