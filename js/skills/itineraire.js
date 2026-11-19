@@ -16,7 +16,7 @@ App.registerSkill({
     const ckey = s => api.norm(s).replace(/\bst\b/g, 'saint').replace(/\bste\b/g, 'sainte').replace(/[^a-z0-9]/g, '');
     const asmNames = () => { const m = new Map(); for (const a of [...(circ().assemblees || []), ...api.data.persons.map(p => p.assemblee).filter(Boolean)]) if (!/^groupe\b/i.test(a) && !m.has(ckey(a))) m.set(ckey(a), a); return [...m.values()].sort((a, b) => a.localeCompare(b, 'fr')); };
     const TYPES = {
-      visite: {l: 'Visite', bg: '#ffffff'}, vacances: {l: 'Vacances', bg: '#c8f7c5'}, repos: {l: 'Repos', bg: '#c8f7c5'},
+      visite: {l: 'Visite', bg: '#ffffff'}, src: {l: 'Visite SRC', bg: '#d9d9d9'}, vacances: {l: 'Vacances', bg: '#c8f7c5'}, repos: {l: 'Repos', bg: '#c8f7c5'},
       ac: {l: 'Assemblée de circ.', bg: '#fff3a3'}, ar: {l: 'Assemblée régionale', bg: '#fff3a3'}, memorial: {l: 'Mémorial', bg: '#fff3a3'},
       pp: {l: 'Semaine PP', bg: '#dbeafe'}, formation: {l: 'Formation / école', bg: '#dbeafe'}, autre: {l: 'Autre', bg: '#f1f2f4'}};
     const SPECIALS = ['VACANCES', 'SEMAINE DE REPOS', 'AC-RF', 'AC-RC', 'MÉMORIAL', 'Semaine PP', 'ASSEMBLÉE RÉGIONALE', 'EMR Anciens', 'EMR Assistants', 'SEMAINE PRÉPARATION ESP', 'ESP'];
@@ -37,9 +37,10 @@ App.registerSkill({
       if (/memorial/.test(t)) return 'memorial';
       if (/semaine pp|\bpp\b/.test(t)) return 'pp';
       if (/\bemr\b|\besp\b|\btps\b|formation|preparation|ecole/.test(t)) return 'formation';
-      if (asmOf(label)) return 'visite';
+      if (asmOf(label)) return /\bsrc\b|suppl[ée]ant/.test(t) ? 'src' : 'visite';
       return t ? 'autre' : 'autre';
     }
+    const isV = t => t === 'visite' || t === 'src';   // visite assurée par moi ou par le suppléant (SRC)
     // Dates
     const D = iso => new Date(iso + 'T00:00');
     const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -118,7 +119,7 @@ App.registerSkill({
 
     function controle(A) {
       const names = asmNames(), vis = {};
-      A.semaines.forEach((r, i) => { if (r.type === 'visite' && r.asm) (vis[r.asm] ??= []).push({i, w: weekOf(A, i)}); });
+      A.semaines.forEach((r, i) => { if (isV(r.type) && r.asm) (vis[r.asm] ??= []).push({i, w: weekOf(A, i)}); });
       const rows = names.map(a => { const v = vis[a] || [], va = v.filter(x => halfOf(x.w.s) === 'A'), vb = v.filter(x => halfOf(x.w.s) === 'B');
         const gap = v.length >= 2 ? Math.round((v[1].w.s - v[0].w.s) / 604800000) : null;
         const ok = va.length === 1 && vb.length === 1;
@@ -140,15 +141,15 @@ App.registerSkill({
           ${A.semaines.map((r, i) => { const w = weekOf(A, i), now = t >= add(w.s, -1) && t <= w.e, bg = TYPES[r.type]?.bg || '#fff';
             return `<tr data-i="${i}" style="background:${bg};${now ? 'outline:2px solid var(--accent,#2f6fd6);' : ''}">
               <td><strong>${w.n}</strong></td><td class="small" style="white-space:nowrap">${dd(w.s)} – ${dd(w.e)}</td>
-              <td><input list="iList" data-f="libelle" value="${api.esc(r.libelle)}" style="width:100%;font-weight:${r.type === 'visite' ? 600 : 400}">${r.type === 'visite' && !r.asm ? '<div class="small" style="color:var(--danger,#c00)">assemblée non reconnue</div>' : ''}</td>
+              <td><input list="iList" data-f="libelle" value="${api.esc(r.libelle)}" style="width:100%;font-weight:${isV(r.type) ? 600 : 400}">${isV(r.type) && !r.asm ? '<div class="small" style="color:var(--danger,#c00)">assemblée non reconnue</div>' : ''}</td>
               <td><select data-f="type" style="min-width:140px">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}"${r.type === k ? ' selected' : ''}>${v.l}</option>`).join('')}</select></td>
               <td><input data-f="note" value="${api.esc(r.note || '')}" style="width:100%"></td>
               <td><input data-f="zone" value="${api.esc(r.zone || '')}" title="${api.esc(r.vacNom || '')}" style="width:110px"></td>
-              ${['s302', 'jw', 'cour'].map(k => `<td style="text-align:center;white-space:nowrap"><input type="checkbox" data-c="${k}"${r[k] ? ' checked' : ''}>${k !== 'jw' && r.type === 'visite' ? `<button class="btn" data-doc="${k}" title="${k === 's302' ? 'Préparer le S-302' : 'Préparer la lettre au CCA'}" style="padding:2px 6px;margin-left:3px">📄</button>` : ''}</td>`).join('')}
+              ${['s302', 'jw', 'cour'].map(k => `<td style="text-align:center;white-space:nowrap"><input type="checkbox" data-c="${k}"${r[k] ? ' checked' : ''}>${k !== 'jw' && isV(r.type) ? `<button class="btn" data-doc="${k}" title="${k === 's302' ? 'Préparer le S-302' : 'Préparer la lettre au CCA'}" style="padding:2px 6px;margin-left:3px">📄</button>${k === 'cour' && r.logement === false ? '<div class="small muted">sans logement</div>' : ''}` : ''}</td>`).join('')}
               <td><div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input type="checkbox" data-c="fait"${r.fait ? ' checked' : ''} title="Fait"${r.tache ? '' : ' style="visibility:hidden"'}><input data-f="tache" value="${api.esc(r.tache || '')}" style="flex:1;min-width:160px;${r.fait ? 'text-decoration:line-through;opacity:.6' : ''}"></div></td>
               <td style="white-space:nowrap"><button class="btn" data-mv="-1" title="Monter">↑</button><button class="btn" data-mv="1" title="Descendre">↓</button><button class="btn" data-ins title="Insérer une semaine avant">＋</button><button class="btn" data-del title="Supprimer la semaine">✕</button></td></tr>`; }).join('')}
           </tbody></table></div>
-          <p class="small muted" style="margin:8px 0 0">Couleurs : <span style="background:#c8f7c5;padding:0 4px">vacances / repos</span> <span style="background:#fff3a3;padding:0 4px">assemblées, Mémorial</span> <span style="background:#dbeafe;padding:0 4px">semaines PP, formations</span>. A = septembre à février, B = mars à août.</p></div>`;
+          <p class="small muted" style="margin:8px 0 0">Couleurs : <span style="background:#d9d9d9;padding:0 4px">visite SRC</span> <span style="background:#c8f7c5;padding:0 4px">vacances / repos</span> <span style="background:#fff3a3;padding:0 4px">assemblées, Mémorial</span> <span style="background:#dbeafe;padding:0 4px">semaines PP, formations</span>. A = septembre à février, B = mars à août.</p></div>`;
     }
 
     function bindYear(A) {
@@ -165,7 +166,7 @@ App.registerSkill({
         for (const inp of api.$$('[data-f]', tr)) inp.onchange = () => {
           const f = inp.dataset.f; r[f] = inp.value.trim();
           if (f === 'libelle') { r.asm = asmOf(r.libelle); r.type = typeOf(r.libelle); const m = /(\d+)\s*min/.exec(r.libelle); if (m && !r.note) r.note = m[0]; }
-          if (f === 'type' && r.type === 'visite') r.asm = asmOf(r.libelle);
+          if (f === 'type' && isV(r.type)) r.asm = asmOf(r.libelle);
           redraw();
         };
         for (const c of api.$$('[data-c]', tr)) c.onchange = () => { r[c.dataset.c] = c.checked; redraw(); };
@@ -206,7 +207,7 @@ App.registerSkill({
       if (rep.length && !(await api.confirm('Remplacer', `Ces années existent déjà et seront remplacées : ${rep.map(f => f.titre).join(', ')}.`, 'Remplacer'))) return;
       for (const f of found) { const old = L.findIndex(a => a.titre === f.titre); const y = {id: api.uid(), ...f}; if (old >= 0) L.splice(old, 1, y); else L.push(y); state.id = y.id; }
       api.save(); render();
-      const unk = found.flatMap(f => f.semaines.filter(s => s.type === 'visite' && !s.asm)).length;
+      const unk = found.flatMap(f => f.semaines.filter(s => isV(s.type) && !s.asm)).length;
       api.toast(`${found.length} année${found.length > 1 ? 's' : ''} importée${found.length > 1 ? 's' : ''} (${found.map(f => f.titre + ' : ' + f.semaines.length + ' semaines').join(' ; ')})${unk ? ` · ${unk} libellé(s) à vérifier` : ''}`);
     }
 
@@ -336,41 +337,69 @@ App.registerSkill({
        elle sert ensuite à toutes les assemblées du cycle (objet, coordinateur et dates remplis automatiquement). */
     const fixObjet = html => String(html || '').replace(/(dans\s+l['’]assembl[ée]e)\s*(?:…|\.\.\.)/i, '$1 de {{v_assemblee}}');
     const cycleName = (A, h) => `${A.titre.replace(/\s*A et B\s*$/i, '').trim()} ${h}`;
-    function cycleModel(A, h) {   // la lettre du cycle, sinon celle du cycle précédent, sinon le modèle général
-      if (A.lettres?.[h]) return {html: A.lettres[h], from: cycleName(A, h), own: true};
-      const L = store().annees.slice().sort((a, b) => a.debut.localeCompare(b.debut)), k = L.indexOf(A);
-      const prev = [...(h === 'B' ? [[A, 'A']] : []), ...L.slice(0, k).reverse().flatMap(Y => [[Y, 'B'], [Y, 'A']])].find(([Y, hh]) => Y.lettres?.[hh]);
-      if (prev) return {html: prev[0].lettres[prev[1]], from: cycleName(prev[0], prev[1]), own: false};
-      return {html: fixObjet(ensureTpl('cour').body), from: 'modèle général', own: false};
+    // Deux lettres par cycle : avec demande de logement, et la même sans (« 5. Logement : Merci de ne pas prévoir de logement pour la visite. »)
+    const SANS_LOG = 'Merci de ne pas prévoir de logement pour la visite.';
+    function sansLogement(html) {
+      const box = document.createElement('div'); box.innerHTML = html;
+      const head = [...box.querySelectorAll('p,h1,h2,h3')].find(e => /^\s*\d*\.?\s*logement\s*:?\s*$/i.test(e.textContent));
+      const n = head?.nextElementSibling; if (!n) return html;
+      n.innerHTML = SANS_LOG;
+      for (let x = n.nextElementSibling; x && !/^\s*\d+\.\s/.test(x.textContent) && /logement|arriverons/i.test(x.textContent); x = n.nextElementSibling) x.remove();
+      return box.innerHTML;
+    }
+    const getL = (Y, h) => { const v = Y.lettres?.[h]; return !v ? null : typeof v === 'string' ? {avec: v, sans: null} : v; };
+    function cycleModel(A, h, logement = true) {   // la lettre du cycle, sinon celle du cycle précédent, sinon le modèle général
+      const pick = (L, from, own) => ({html: logement ? L.avec : (L.sans || sansLogement(L.avec)), from, own, sansPerso: !!L.sans});
+      if (getL(A, h)) return pick(getL(A, h), cycleName(A, h), true);
+      const Ys = store().annees.slice().sort((a, b) => a.debut.localeCompare(b.debut)), k = Ys.indexOf(A);
+      const prev = [...(h === 'B' ? [[A, 'A']] : []), ...Ys.slice(0, k).reverse().flatMap(Y => [[Y, 'B'], [Y, 'A']])].find(([Y, hh]) => getL(Y, hh));
+      if (prev) return pick(getL(prev[0], prev[1]), cycleName(prev[0], prev[1]), false);
+      return pick({avec: fixObjet(ensureTpl('cour').body), sans: null}, 'modèle général', false);
     }
     // Les champs apparaissent comme des étiquettes non modifiables dans l'éditeur
     const toChips = html => html.replace(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi, (m, k) => `<span data-champ="${k}" contenteditable="false" style="background:#e7f0fd;color:#1d4f91;border-radius:4px;padding:0 4px;font-weight:600">${api.esc(App.fields.label(k))}</span>`);
     const fromChips = el => { const c = el.cloneNode(true); for (const x of c.querySelectorAll('[data-champ]')) x.replaceWith(`{{${x.dataset.champ}}}`); return c.innerHTML; };
     async function editCycleLetter(A, h) {
-      const m = cycleModel(A, h);
-      const body = `<p class="small muted" style="margin-top:0">Lettre au CCA du <strong>cycle ${api.esc(cycleName(A, h))}</strong> (${h === 'A' ? 'septembre à février' : 'mars à août'})${m.own ? '' : ` — part de : ${api.esc(m.from)}`}.
-        Modifiez le texte (thèmes, cantiques, consignes…) : il servira pour toutes les assemblées du cycle. Les étiquettes bleues se remplissent seules pour chaque assemblée (objet, coordinateur, dates, date du jour).</p>
-        <div id="cEd" contenteditable="true" style="border:1px solid var(--line,#ddd);border-radius:8px;padding:28px 34px;background:#fff;max-height:60vh;overflow:auto;font-family:Helvetica,Arial,sans-serif;font-size:11pt;line-height:1.35">${toChips(fixObjet(m.html))}</div>
-        <label class="row small" style="gap:6px;margin-top:8px"><input type="checkbox" id="cGen" checked> Enregistrer aussi comme modèle général (point de départ des cycles suivants)</label>`;
-      const ok = await api.modal({title: `Lettre du cycle ${cycleName(A, h)}`, body, wide: true, actions: [
+      const mA = cycleModel(A, h, true), mS = cycleModel(A, h, false);
+      const cur = {avec: toChips(fixObjet(mA.html)), sans: toChips(fixObjet(mS.html))}; let tab = 'avec', sansTouched = mS.sansPerso;
+      const body = `<p class="small muted" style="margin-top:0">Lettres au CCA du <strong>cycle ${api.esc(cycleName(A, h))}</strong> (${h === 'A' ? 'septembre à février' : 'mars à août'})${mA.own ? '' : ` — part de : ${api.esc(mA.from)}`}.
+        Elles serviront pour toutes les assemblées du cycle ; les étiquettes bleues se remplissent seules (objet, coordinateur, dates, date du jour).</p>
+        <div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap"><button class="btn primary" data-tab="avec">🏠 Avec logement</button><button class="btn" data-tab="sans">Sans logement</button><span class="small muted" id="cHint"></span></div>
+        <div id="cEd" contenteditable="true" style="border:1px solid var(--line,#ddd);border-radius:8px;padding:28px 34px;background:#fff;max-height:54vh;overflow:auto;font-family:Helvetica,Arial,sans-serif;font-size:11pt;line-height:1.35">${cur.avec}</div>
+        <label class="row small" style="gap:6px;margin-top:8px"><input type="checkbox" id="cGen" checked> Enregistrer aussi la lettre « avec logement » comme modèle général (point de départ des cycles suivants)</label>`;
+      const sync = ed => { if (tab === 'avec') { if (ed.innerHTML !== cur.avec) { cur.avec = ed.innerHTML; if (!sansTouched) { const t = document.createElement('div'); t.innerHTML = cur.avec; cur.sans = toChips(sansLogement(fromChips(t))); } } }
+        else { if (ed.innerHTML !== cur.sans) { cur.sans = ed.innerHTML; sansTouched = true; } } };
+      const hint = d => { d.querySelector('#cHint').textContent = tab === 'avec' ? (sansTouched ? 'La lettre « sans logement » a été modifiée séparément.' : 'La lettre « sans logement » suit ce texte, avec « Merci de ne pas prévoir de logement pour la visite. »') : 'Version utilisée quand aucun logement n’est demandé.'; };
+      const promise = api.modal({title: `Lettres du cycle ${cycleName(A, h)}`, body, wide: true, actions: [
         {label: 'Annuler', value: null},
-        ...(m.own ? [{label: 'Repartir du modèle général', onClick: el => { api.$('#cEd', el).innerHTML = toChips(fixObjet(ensureTpl('cour').body)); return false; }}] : []),
-        {label: 'Enregistrer pour le cycle', kind: 'primary', onClick: el => { const html = fromChips(api.$('#cEd', el)); (A.lettres ??= {})[h] = html;
-          if (api.$('#cGen', el).checked) { const t = ensureTpl('cour'); t.body = html; t.updated = new Date().toISOString(); }
-          // les visites du cycle reprennent la nouvelle lettre (sauf celles déjà envoyées)
-          A.semaines.forEach((r, k) => { if (r.docs?.cour && !r.cour && halfOf(weekOf(A, k).s) === h) delete r.docs.cour; });
+        {label: 'Enregistrer pour le cycle', kind: 'primary', onClick: el => {
+          sync(api.$('#cEd', el));
+          const tmp = document.createElement('div'), back = html => { tmp.innerHTML = html; return fromChips(tmp); };
+          const avec = back(cur.avec), sans = sansTouched ? back(cur.sans) : null;
+          (A.lettres ??= {})[h] = {avec, sans};
+          if (api.$('#cGen', el).checked) { const t = ensureTpl('cour'); t.body = avec; t.updated = new Date().toISOString(); }
+          A.semaines.forEach((r, k) => { if (r.docs?.cour && !r.cour && halfOf(weekOf(A, k).s) === h) delete r.docs.cour; });   // les courriers non validés reprennent la nouvelle lettre
           api.save(); return 'ok'; }}]});
-      if (ok) { api.toast(`Lettre du cycle ${cycleName(A, h)} enregistrée : elle sera utilisée pour chaque assemblée du cycle.`); render(); }
+      setTimeout(() => { const d = [...document.querySelectorAll('dialog[open]')].find(x => x.querySelector('#cEd')); if (!d) return; hint(d);
+        for (const b of d.querySelectorAll('[data-tab]')) b.addEventListener('click', () => { const ed = d.querySelector('#cEd'); sync(ed); tab = b.dataset.tab; ed.innerHTML = cur[tab];
+          for (const x of d.querySelectorAll('[data-tab]')) x.classList.toggle('primary', x === b); hint(d); }); }, 0);
+      const ok = await promise;
+      if (ok) { api.toast(`Lettres du cycle ${cycleName(A, h)} enregistrées : elles serviront pour chaque assemblée du cycle.`); render(); }
     }
     async function docFlow(A, i, kind) {
-      const r = A.semaines[i], w = weekOf(A, i), tpl = ensureTpl(kind), ctx = visiteCtx(r, w), h = halfOf(w.s), cm = kind === 'cour' ? cycleModel(A, h) : null;
+      const r = A.semaines[i], w = weekOf(A, i), tpl = ensureTpl(kind), ctx = visiteCtx(r, w), h = halfOf(w.s);
+      let cm = kind === 'cour' ? cycleModel(A, h, r.logement !== false) : null;
       const merged = () => App.pdf.merge(kind === 'cour' ? fixObjet(cm.html) : tpl.body, App.fields.values({visite: ctx}));
       const lbl = kind === 's302' ? 'S-302' : 'Lettre au CCA', flag = kind === 's302' ? 's302' : 'cour';
       const fileName = App.pdf.fileName(`${kind === 's302' ? 'S-302' : 'Lettre CCA'} ${ctx.assemblee} ${w.s.toLocaleDateString('fr-FR').replace(/\//g, '-')}`) + '.pdf';
       const body = `<p class="small muted" style="margin-top:0">${api.esc(ctx.assemblee)} · semaine du ${api.esc(ctx.semaine)}${kind === 'cour' ? ` · coordinateur : ${api.esc(ctx.coordinateur)}` : ''}${r.docs?.[kind] ? ' · <strong>version modifiée pour cette visite</strong>' : ''}</p>
+        ${kind === 'cour' ? `<div class="row small" style="gap:14px;margin-bottom:6px"><label class="row" style="gap:4px"><input type="radio" name="dLog" value="1"${r.logement !== false ? ' checked' : ''}> 🏠 Avec logement</label><label class="row" style="gap:4px"><input type="radio" name="dLog" value="0"${r.logement === false ? ' checked' : ''}> Sans logement</label></div>` : ''}
         <div id="dEd" contenteditable="true" style="border:1px solid var(--line,#ddd);border-radius:8px;padding:28px 34px;background:#fff;max-height:58vh;overflow:auto;font-family:Helvetica,Arial,sans-serif;font-size:11pt;line-height:1.35">${r.docs?.[kind] || merged()}</div>
         <p class="small muted" style="margin:6px 0 0">${kind === 'cour' ? `Lettre du cycle ${api.esc(cycleName(A, h))} (${api.esc(cm.own ? 'modifiée pour ce cycle' : 'reprise de : ' + cm.from)}), remplie pour ${api.esc(ctx.assemblee)}. Pour changer la lettre de toutes les assemblées du cycle : bouton « Lettre du cycle » en haut de l’itinéraire. Une correction faite ici ne vaut que pour cette assemblée.` : `Modifiez directement le texte pour cette visite. Le modèle commun se modifie dans Modèles › « ${api.esc(tpl.name)} ».`}</p>`;
       const keep = el => { (r.docs ??= {})[kind] = api.$('#dEd', el).innerHTML; api.save(); };
+      if (kind === 'cour') setTimeout(() => { const d = [...document.querySelectorAll('dialog[open]')].find(x => x.querySelector('#dEd')); if (!d) return;
+        for (const rb of d.querySelectorAll('input[name=dLog]')) rb.addEventListener('change', () => { r.logement = rb.value === '1'; cm = cycleModel(A, h, r.logement);
+          if (r.docs) delete r.docs.cour; d.querySelector('#dEd').innerHTML = merged(); api.save(); }); }, 0);
       const blobOf = async el => new Blob([await App.pdf.render(api.$('#dEd', el).innerHTML, {title: lbl})], {type: 'application/pdf'});
       await api.modal({title: `${lbl} — ${ctx.assemblee}`, body, wide: true, actions: [
         {label: 'Fermer', value: null, onClick: el => { if (api.$('#dEd', el).innerHTML !== (r.docs?.[kind] || merged())) keep(el); }},
@@ -386,7 +415,7 @@ App.registerSkill({
       render();
     }
     async function lotS302(A) {
-      const rows = A.semaines.map((r, i) => ({r, i, w: weekOf(A, i)})).filter(x => x.r.type === 'visite' && x.r.asm && x.w.e >= today());
+      const rows = A.semaines.map((r, i) => ({r, i, w: weekOf(A, i)})).filter(x => isV(x.r.type) && x.r.asm && x.w.e >= today());
       if (!rows.length) return api.toast('Aucune visite à venir dans cette année.', 'error');
       const ids = await api.modal({title: 'S-302 en lot', body: `<p class="small muted" style="margin-top:0">Un PDF par visite, regroupés dans un ZIP. Les visites dont le S-302 n’est pas encore coché sont présélectionnées.</p>
         <div style="max-height:360px;overflow:auto">${rows.map(x => `<label class="row small" style="gap:6px;padding:2px 0"><input type="checkbox" value="${x.i}" ${x.r.s302 ? '' : 'checked'}> sem. ${x.w.n} · ${dd(x.w.s)} – ${dd(x.w.e)} · <strong>${api.esc(x.r.asm)}</strong>${x.r.s302 ? ' <span class="muted">(déjà fait)</span>' : ''}</label>`).join('')}</div>
@@ -421,7 +450,7 @@ App.registerSkill({
         const w = weekOf(A, i), bg = TYPES[r.type]?.bg || '#ffffff';
         if (bg !== '#ffffff') page.drawRectangle({x: M, y: y - rh, width: W - 2 * M, height: rh, color: hex(bg)});
         const vals = [String(w.n), `${dd(w.s)} – ${dd(w.e)}`, r.libelle, r.note, r.zone, r.s302 ? 'X' : '', r.jw ? 'X' : '', r.cour ? 'X' : ''];
-        x = M; vals.forEach((v, j) => { let s = T(v); const f = j === 2 && r.type !== 'visite' ? B : R; while (s.length > 1 && f.widthOfTextAtSize(s, fs) > cols[j][1] - 4) s = s.slice(0, -2) + '…'; if (s) page.drawText(s, {x: x + 2, y: y - rh + 4, size: fs, font: f, color: j === 3 ? mute : ink}); x += cols[j][1]; });
+        x = M; vals.forEach((v, j) => { let s = T(v); const f = j === 2 && !isV(r.type) ? B : R; while (s.length > 1 && f.widthOfTextAtSize(s, fs) > cols[j][1] - 4) s = s.slice(0, -2) + '…'; if (s) page.drawText(s, {x: x + 2, y: y - rh + 4, size: fs, font: f, color: j === 3 ? mute : ink}); x += cols[j][1]; });
         y -= rh; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .3, color: line});
       });
       page.drawText(T(`Mon Bureau · imprimé le ${api.dateLongue()}`), {x: M, y: 14, size: 7, font: R, color: mute});
