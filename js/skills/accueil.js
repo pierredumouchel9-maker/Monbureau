@@ -14,7 +14,8 @@ App.registerSkill({
       <div class="page-head"><div><h1>Bonjour${p.prenom ? ' ' + api.esc(p.prenom) : ''}</h1>
       <p>Toutes vos données sont chiffrées sur cet appareil.</p></div></div>
       <div class="stack">
-        ${backupNotice}${profilNotice}
+        ${backupNotice}${profilNotice}${(() => { const L = App.itineraire ? App.itineraire.alerts() : []; if (!L.length) return '';
+          return `<div class="notice danger"><strong>⚠ Courriers à envoyer (visites dans moins de 6 semaines)</strong><ul style="margin:6px 0 0 18px;padding:0">${L.map(x => `<li><strong>${api.esc(x.r.asm || x.r.libelle)}</strong> — semaine du ${x.s.toLocaleDateString('fr-FR')} (dans ${x.jours} j) : ${x.manque.join(' et ')}</li>`).join('')}</ul><a href="#/itineraire">Ouvrir l’itinéraire</a></div>`; })()}
         <div class="grid">
           <a class="card" href="#/annuaire" style="text-decoration:none;color:inherit"><div class="muted small">Annuaire</div><div class="stat">${d.persons.length}</div><div class="small muted">personnes · ${d.congregations.length} assemblées</div></a>
           <a class="card" href="#/modeles" style="text-decoration:none;color:inherit"><div class="muted small">Modèles</div><div class="stat">${d.templates.length}</div><div class="small muted">modèles de documents</div></a>

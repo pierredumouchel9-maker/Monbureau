@@ -7,6 +7,24 @@ App.fields.register('visite', 'Semaine spéciale', [
 /* Itinéraire : planning des semaines de l'année de service (visites, vacances, assemblées, semaines PP, formations…),
    avec suivi des formulaires (S-302, jw.org, courrier) et des tâches. Les dates se calculent semaine par semaine
    à partir du premier mardi : déplacer une ligne déplace la visite, les dates suivent. */
+/* Rappels d'envoi : S-302 et lettre aux anciens (« Cour. ») à envoyer au plus tard 6 semaines avant la visite. */
+App.itineraire = {
+  DELAI: 42,
+  alerts() {
+    const api = App.api, L = api.moduleData('itineraire', {annees: []}).annees, out = [];
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    for (const A of L) A.semaines.forEach((r, i) => {
+      if (!(r.type === 'visite' || r.type === 'src') || !(r.libelle || r.asm)) return;
+      const s = new Date(A.debut + 'T00:00'); s.setDate(s.getDate() + 7 * i); const e = new Date(s); e.setDate(e.getDate() + 5);
+      const lim = new Date(s); lim.setDate(lim.getDate() - this.DELAI);
+      if (t < lim || e < t) return;
+      const manque = [!r.s302 && 'S-302', !r.cour && 'lettre aux anciens'].filter(Boolean);
+      if (manque.length) out.push({A, i, r, s, lim, manque, jours: Math.round((s - t) / 864e5)});
+    });
+    return out.sort((a, b) => a.s - b.s);
+  }
+};
+
 App.registerSkill({
   id: 'itineraire', name: 'Itinéraire', icon: '🗓️', group: 'metier', order: 12, version: '1.0',
   description: 'Itinéraire de l’année de service, cycle après cycle : visites, vacances, assemblées, formulaires.',
@@ -117,6 +135,13 @@ App.registerSkill({
         ${nx ? `<div><div class="small muted">Semaine prochaine (sem. ${wn.n}, du ${dd(wn.s)} au ${dd(wn.e)})</div><strong style="font-size:1.1rem">${api.esc(nx.libelle || '—')}</strong>${nx.asm && !(nx.s302 && nx.jw && nx.cour) ? ' <span class="pill warn">formulaires à faire</span>' : ''}</div>` : ''}</div>`;
     }
 
+    function retards(A) {
+      const L = App.itineraire.alerts().filter(x => x.A === A); if (!L.length) return '';
+      return `<div class="notice danger" style="margin-bottom:12px"><strong>⚠ À envoyer (moins de 6 semaines avant la visite)</strong>
+        <ul style="margin:6px 0 0 18px;padding:0">${L.map(x => { const w = weekOf(A, x.i);
+          return `<li><strong>${api.esc(x.r.asm || x.r.libelle)}</strong> — sem. ${w.n}, du ${dd(w.s)} au ${dd(w.e)} (dans ${x.jours} jour${x.jours > 1 ? 's' : ''}) : <span style="color:var(--danger,#c00)">${x.manque.join(' et ')} non envoyé${x.manque.length > 1 ? 's' : x.manque[0] === 'S-302' ? '' : 'e'}</span>
+            ${x.manque.includes('S-302') ? `<button class="btn" data-goto="${x.i}" data-k="s302" style="padding:1px 8px">S-302</button>` : ''}${x.manque.includes('lettre aux anciens') ? `<button class="btn" data-goto="${x.i}" data-k="cour" style="padding:1px 8px">Lettre</button>` : ''}</li>`; }).join('')}</ul></div>`;
+    }
     function controle(A) {
       const names = asmNames(), vis = {};
       A.semaines.forEach((r, i) => { if (isV(r.type) && r.asm) (vis[r.asm] ??= []).push({i, w: weekOf(A, i)}); });
@@ -133,20 +158,21 @@ App.registerSkill({
 
     function yearView(A) {
       const names = asmNames(), t = today();
-      return `${nowBanner(A)}${controle(A)}
+      return `${nowBanner(A)}${retards(A)}${controle(A)}
         <div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><strong>${api.esc(A.titre)}</strong>
           <div class="row small" style="gap:8px;flex-wrap:wrap"><label>Premier mardi : <input type="date" id="iDeb" value="${A.debut}"></label>${['A', 'B'].map(h => `<button class="btn" data-cyc="${h}" title="Lettre au CCA utilisée pour toutes les assemblées du cycle">✉︎ Lettre du cycle ${api.esc(cycleName(A, h))}${A.lettres?.[h] ? ' ✓' : ''}</button>`).join('')}<button class="btn" id="iVac" title="Dates officielles de l’Éducation nationale">Vacances scolaires${A.vacMaj ? ' ✓' : ''}</button><button class="btn" id="iAddEnd">+ Semaine à la fin</button><button class="btn" id="iDelY">Supprimer l’année</button></div></div>
           <datalist id="iList">${[...names, ...SPECIALS].map(n => `<option value="${api.esc(n)}">`).join('')}</datalist>
           <div class="table-wrap" style="max-height:70vh;margin-top:8px"><table class="list" style="font-size:.9rem"><thead><tr><th>Sem.</th><th>Du – au</th><th style="min-width:260px">Itinéraire</th><th>Type</th><th style="min-width:180px">Remarques</th><th>Vacances</th><th title="S-302">S-302</th><th title="jw.org">jw.org</th><th title="Courrier">Cour.</th><th style="min-width:200px">Tâche</th><th></th></tr></thead><tbody>
           ${A.semaines.map((r, i) => { const w = weekOf(A, i), now = t >= add(w.s, -1) && t <= w.e, bg = TYPES[r.type]?.bg || '#fff';
             const h = halfOf(w.s), sep = i === 0 || halfOf(weekOf(A, i - 1).s) !== h;   // séparation entre les deux cycles
-            return `${sep ? `<tr class="cyc-sep"><td colspan="11" style="background:#1f3f66;color:#fff;font-weight:600;padding:6px 10px;${i ? 'border-top:4px solid #fff' : ''}">Cycle ${api.esc(cycleName(A, h))} — ${h === 'A' ? 'septembre à février' : 'mars à août'}</td></tr>` : ''}<tr data-i="${i}" style="background:${bg};${now ? 'outline:2px solid var(--accent,#2f6fd6);' : ''}">
+            const late = isV(r.type) && (!r.s302 || !r.cour) && t >= add(w.s, -App.itineraire.DELAI) && w.e >= t;
+            return `${sep ? `<tr class="cyc-sep"><td colspan="11" style="background:#1f3f66;color:#fff;font-weight:600;padding:6px 10px;${i ? 'border-top:4px solid #fff' : ''}">Cycle ${api.esc(cycleName(A, h))} — ${h === 'A' ? 'septembre à février' : 'mars à août'}</td></tr>` : ''}<tr data-i="${i}" style="background:${bg};${now ? 'outline:2px solid var(--accent,#2f6fd6);' : ''}${late ? 'box-shadow:inset 5px 0 0 #d43131;' : ''}"${late ? ` title="À envoyer : ${[!r.s302 && 'S-302', !r.cour && 'lettre aux anciens'].filter(Boolean).join(', ')}"` : ''}>
               <td><strong>${w.n}</strong></td><td class="small" style="white-space:nowrap">${dd(w.s)} – ${dd(w.e)}</td>
               <td><input list="iList" data-f="libelle" value="${api.esc(r.libelle)}" style="width:100%;font-weight:${isV(r.type) ? 600 : 400}">${isV(r.type) && !r.asm ? '<div class="small" style="color:var(--danger,#c00)">assemblée non reconnue</div>' : ''}</td>
               <td><select data-f="type" style="min-width:140px">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}"${r.type === k ? ' selected' : ''}>${v.l}</option>`).join('')}</select></td>
               <td><input data-f="note" value="${api.esc(r.note || '')}" style="width:100%"></td>
               <td><input data-f="zone" value="${api.esc(r.zone || '')}" title="${api.esc(r.vacNom || '')}" style="width:110px"></td>
-              ${['s302', 'jw', 'cour'].map(k => `<td style="text-align:center;white-space:nowrap"><input type="checkbox" data-c="${k}"${r[k] ? ' checked' : ''}>${k !== 'jw' && isV(r.type) ? `<button class="btn" data-doc="${k}" title="${k === 's302' ? 'Préparer le S-302' : 'Préparer la lettre au CCA'}" style="padding:2px 6px;margin-left:3px">📄</button>${k === 'cour' && r.logement === false ? '<div class="small muted">sans logement</div>' : ''}` : ''}</td>`).join('')}
+              ${['s302', 'jw', 'cour'].map(k => `<td style="text-align:center;white-space:nowrap"><input type="checkbox" data-c="${k}"${r[k] ? ' checked' : ''}>${k !== 'jw' && isV(r.type) ? `<button class="btn" data-doc="${k}" title="${k === 's302' ? 'Préparer le S-302' : 'Préparer la lettre au CCA'}" style="padding:2px 6px;margin-left:3px">📄</button>${k === 'cour' && r.logement === false ? '<div class="small muted">sans logement</div>' : ''}${late && k !== 'jw' && !r[k] ? '<div class="small" style="color:#d43131;font-weight:600">à envoyer</div>' : ''}` : ''}</td>`).join('')}
               <td><div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input type="checkbox" data-c="fait"${r.fait ? ' checked' : ''} title="Fait"${r.tache ? '' : ' style="visibility:hidden"'}><input data-f="tache" value="${api.esc(r.tache || '')}" style="flex:1;min-width:160px;${r.fait ? 'text-decoration:line-through;opacity:.6' : ''}"></div></td>
               <td style="white-space:nowrap"><button class="btn" data-mv="-1" title="Monter">↑</button><button class="btn" data-mv="1" title="Descendre">↓</button><button class="btn" data-ins title="Insérer une semaine avant">＋</button><button class="btn" data-del title="Supprimer la semaine">✕</button></td></tr>`; }).join('')}
           </tbody></table></div>
@@ -159,6 +185,7 @@ App.registerSkill({
       api.$('#iDeb', el).onchange = e => { if (e.target.value) { A.debut = e.target.value; redraw(); } };
       api.$('#iAddEnd', el).onclick = () => { A.semaines.push(blank()); redraw(); };
       for (const b of api.$$('[data-cyc]', el)) b.onclick = () => editCycleLetter(A, b.dataset.cyc);
+      for (const b of api.$$('[data-goto]', el)) b.onclick = () => { const i = +b.dataset.goto; b.dataset.k === 's302' && s302Doc() ? s302Flow(A, i) : docFlow(A, i, b.dataset.k); };
       api.$('#iVac', el).onclick = async () => { if (A.semaines.some(r => r.zone) && !(await api.confirm('Vacances scolaires', 'La colonne « Vacances » sera remplacée par les dates officielles de l’Éducation nationale (data.education.gouv.fr).', 'Mettre à jour'))) return; if (await majVacances(A)) redraw(); };
       api.$('#iDelY', el).onclick = async () => { if (!(await api.confirm('Supprimer l’année', `Supprimer l’itinéraire « ${A.titre} » ?`, 'Supprimer', true))) return; store().annees.splice(store().annees.indexOf(A), 1); state.id = null; api.save(); render(); };
       if (api.$('#iPdf', el)) api.$('#iPdf', el).onclick = async () => { try { api.download(`Itinéraire ${A.titre}.pdf`, await pdf(A)); } catch (e) { api.toast('PDF impossible : ' + e.message, 'error'); } };
