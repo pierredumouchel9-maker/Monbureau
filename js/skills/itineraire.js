@@ -42,6 +42,45 @@ App.registerSkill({
     const isoWeek = d => { const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day); const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1)); return Math.ceil(((t - y0) / 86400000 + 1) / 7); };
     const firstTuesday = y => { const d = new Date(y, 8, 1); while (d.getDay() !== 2) d.setDate(d.getDate() + 1); return d; };
     const dd = d => d.toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit'});
+    /* Vacances scolaires officielles : API ouverte du ministère de l'Éducation nationale (data.education.gouv.fr, jeu « fr-en-calendrier-scolaire »).
+       Une semaine est marquée si au moins un jour du mardi au vendredi tombe pendant les vacances d'une zone. */
+    const API_VAC = 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records';
+    const localDay = s => { const d = new Date(s); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
+    async function fetchVacances(y) {   // année de service sept. y → août y+1
+      const years = [`${y - 1}-${y}`, `${y}-${y + 1}`], out = [];
+      for (const an of years) {
+        let offset = 0;
+        for (;;) {
+          const q = new URLSearchParams({where: `annee_scolaire="${an}" and (zones="Zone A" or zones="Zone B" or zones="Zone C")`, limit: '100', offset: String(offset), select: 'description,start_date,end_date,zones,population'});
+          const r = await fetch(`${API_VAC}?${q}`); if (!r.ok) throw new Error('site de l’Éducation nationale : ' + r.status);
+          const j = await r.json(); for (const x of j.results || []) if (!/enseignant/i.test(x.population || '') && x.start_date && x.end_date) out.push(x);
+          offset += 100; if (offset >= (j.total_count || 0)) break;
+        }
+      }
+      // une période par zone et par vacances (les académies d'une même zone ont les mêmes dates)
+      const per = {};
+      for (const x of out) { const k = x.zones + '|' + x.description + '|' + x.start_date.slice(0, 7);
+        let s0 = localDay(x.start_date); if (s0.getDay() === 5) s0 = add(s0, 1);   // départ « après la classe » du vendredi
+        const e0 = localDay(x.end_date); const p = per[k] ??= {zone: x.zones.replace('Zone ', ''), nom: x.description, s: s0, e: e0};
+        if (s0 < p.s) p.s = s0; if (e0 > p.e) p.e = e0; }
+      return Object.values(per);
+    }
+    const zonesLabel = z => { z = [...new Set(z)].sort(); return !z.length ? '' : z.length === 1 ? `Zone ${z[0]}` : z.length === 3 ? 'Zone A, B et C' : `Zones ${z[0]} et ${z[1]}`; };
+    function applyVacances(A, per) {
+      let n = 0;
+      A.semaines.forEach((r, i) => { const w = weekOf(A, i), days = [0, 1, 2, 3].map(k => add(w.s, k));   // mardi → vendredi
+        const hit = per.filter(p => days.some(d => d >= p.s && d < p.e));
+        r.zone = zonesLabel(hit.map(p => p.zone)); r.vacNom = [...new Set(hit.map(p => p.nom))].join(', '); if (r.zone) n++; });
+      return n;
+    }
+    async function majVacances(A, quiet) {
+      try {
+        const per = await fetchVacances(D(A.debut).getFullYear());
+        if (!per.length) { if (!quiet) api.toast('Le calendrier officiel de cette année n’est pas encore publié.', 'error'); return false; }
+        const n = applyVacances(A, per); A.vacMaj = new Date().toISOString(); api.save();
+        api.toast(`Vacances scolaires officielles renseignées : ${n} semaine${n > 1 ? 's' : ''} concernée${n > 1 ? 's' : ''}`); return true;
+      } catch (e) { api.toast('Vacances non renseignées : impossible de joindre data.education.gouv.fr (hors connexion ?). Réessayez avec le bouton « Vacances scolaires ».', 'error'); return false; }
+    }
     const weekOf = (A, i) => { const s = add(D(A.debut), 7 * i); return {s, e: add(s, 5), n: isoWeek(s)}; };
     const halfOf = d => (d.getMonth() >= 8 || d.getMonth() <= 1) ? 'A' : 'B';   // A : septembre → février ; B : mars → août
     const today = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
@@ -87,7 +126,7 @@ App.registerSkill({
       const names = asmNames(), t = today();
       return `${nowBanner(A)}${controle(A)}
         <div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><strong>${api.esc(A.titre)}</strong>
-          <div class="row small" style="gap:8px;flex-wrap:wrap"><label>Premier mardi : <input type="date" id="iDeb" value="${A.debut}"></label><button class="btn" id="iAddEnd">+ Semaine à la fin</button><button class="btn" id="iDelY">Supprimer l’année</button></div></div>
+          <div class="row small" style="gap:8px;flex-wrap:wrap"><label>Premier mardi : <input type="date" id="iDeb" value="${A.debut}"></label><button class="btn" id="iVac" title="Dates officielles de l’Éducation nationale">Vacances scolaires${A.vacMaj ? ' ✓' : ''}</button><button class="btn" id="iAddEnd">+ Semaine à la fin</button><button class="btn" id="iDelY">Supprimer l’année</button></div></div>
           <datalist id="iList">${[...names, ...SPECIALS].map(n => `<option value="${api.esc(n)}">`).join('')}</datalist>
           <div class="table-wrap" style="max-height:70vh;margin-top:8px"><table class="list" style="font-size:.9rem"><thead><tr><th>Sem.</th><th>Du – au</th><th style="min-width:260px">Itinéraire</th><th>Type</th><th style="min-width:180px">Remarques</th><th>Vacances</th><th title="S-302">S-302</th><th title="jw.org">jw.org</th><th title="Courrier">Cour.</th><th style="min-width:200px">Tâche</th><th></th></tr></thead><tbody>
           ${A.semaines.map((r, i) => { const w = weekOf(A, i), now = t >= add(w.s, -1) && t <= w.e, bg = TYPES[r.type]?.bg || '#fff';
@@ -96,7 +135,7 @@ App.registerSkill({
               <td><input list="iList" data-f="libelle" value="${api.esc(r.libelle)}" style="width:100%;font-weight:${r.type === 'visite' ? 600 : 400}">${r.type === 'visite' && !r.asm ? '<div class="small" style="color:var(--danger,#c00)">assemblée non reconnue</div>' : ''}</td>
               <td><select data-f="type" style="min-width:140px">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}"${r.type === k ? ' selected' : ''}>${v.l}</option>`).join('')}</select></td>
               <td><input data-f="note" value="${api.esc(r.note || '')}" style="width:100%"></td>
-              <td><input data-f="zone" value="${api.esc(r.zone || '')}" style="width:110px"></td>
+              <td><input data-f="zone" value="${api.esc(r.zone || '')}" title="${api.esc(r.vacNom || '')}" style="width:110px"></td>
               ${['s302', 'jw', 'cour'].map(k => `<td style="text-align:center"><input type="checkbox" data-c="${k}"${r[k] ? ' checked' : ''}></td>`).join('')}
               <td><div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input type="checkbox" data-c="fait"${r.fait ? ' checked' : ''} title="Fait"${r.tache ? '' : ' style="visibility:hidden"'}><input data-f="tache" value="${api.esc(r.tache || '')}" style="flex:1;min-width:160px;${r.fait ? 'text-decoration:line-through;opacity:.6' : ''}"></div></td>
               <td style="white-space:nowrap"><button class="btn" data-mv="-1" title="Monter">↑</button><button class="btn" data-mv="1" title="Descendre">↓</button><button class="btn" data-ins title="Insérer une semaine avant">＋</button><button class="btn" data-del title="Supprimer la semaine">✕</button></td></tr>`; }).join('')}
@@ -109,6 +148,7 @@ App.registerSkill({
       const redraw = () => { const s = keep(); api.save(); render(); const w = api.$('.table-wrap[style*="70vh"]', el); if (w) w.scrollTop = s; };
       api.$('#iDeb', el).onchange = e => { if (e.target.value) { A.debut = e.target.value; redraw(); } };
       api.$('#iAddEnd', el).onclick = () => { A.semaines.push(blank()); redraw(); };
+      api.$('#iVac', el).onclick = async () => { if (A.semaines.some(r => r.zone) && !(await api.confirm('Vacances scolaires', 'La colonne « Vacances » sera remplacée par les dates officielles de l’Éducation nationale (data.education.gouv.fr).', 'Mettre à jour'))) return; if (await majVacances(A)) redraw(); };
       api.$('#iDelY', el).onclick = async () => { if (!(await api.confirm('Supprimer l’année', `Supprimer l’itinéraire « ${A.titre} » ?`, 'Supprimer', true))) return; store().annees.splice(store().annees.indexOf(A), 1); state.id = null; api.save(); render(); };
       if (api.$('#iPdf', el)) api.$('#iPdf', el).onclick = async () => { try { api.download(`Itinéraire ${A.titre}.pdf`, await pdf(A)); } catch (e) { api.toast('PDF impossible : ' + e.message, 'error'); } };
       for (const tr of api.$$('tr[data-i]', el)) {
@@ -125,7 +165,7 @@ App.registerSkill({
         api.$('[data-del]', tr).onclick = async () => { if (r.libelle && !(await api.confirm('Supprimer la semaine', `Supprimer « ${r.libelle} » ? Les semaines suivantes remontent d’une semaine.`, 'Supprimer', true))) return; A.semaines.splice(+tr.dataset.i, 1); redraw(); };
       }
     }
-    const blank = () => ({libelle: '', type: 'autre', asm: '', note: '', zone: '', s302: false, jw: false, cour: false, tache: '', fait: false});
+    const blank = () => ({libelle: '', type: 'autre', asm: '', note: '', zone: '', vacNom: '', s302: false, jw: false, cour: false, tache: '', fait: false});
 
     // Import du fichier Excel de travail : une feuille par année (A = n° de semaine, E = itinéraire, F = 1re date, H = vacances, I = remarques, B/C/D = formulaires, J/K = tâche)
     async function importXlsx() {
@@ -169,7 +209,8 @@ App.registerSkill({
       if (L.some(a => a.titre === titre)) return api.toast(`L’année ${titre} existe déjà.`, 'error');
       const semaines = Array.from({length: nWeeks}, (_, i) => { const s = last?.semaines[i]; return s ? {...blank(), libelle: s.libelle, type: s.type, asm: s.asm, note: s.note, tache: s.tache} : blank(); });
       const A = {id: api.uid(), titre, debut: iso(debut), semaines}; L.push(A); state.id = A.id; api.save(); render();
-      api.toast(`${titre} créée${last ? ' à partir de ' + last.titre + ' : ajustez l’ordre et les dates spéciales' : ''}.`);
+      api.toast(`${titre} créée${last ? ' à partir de ' + last.titre + ' : ajustez l’ordre et les dates spéciales' : ''}. Recherche des vacances scolaires…`);
+      if (await majVacances(A, false)) render();
     }
 
     async function pdf(A) {
