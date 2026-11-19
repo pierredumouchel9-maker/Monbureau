@@ -550,7 +550,7 @@ App.circo = (() => {
     const fct = p => fonctionAt(c, p) ?? p.fonction;
     const rank = r => fct(r.p) === 'Ancien' ? 0 : fct(r.p) === 'Assistant' ? 1 : 2;
     const list = [...rows].sort((a, b) => rank(a) - rank(b) || (a.p.nom || '').localeCompare(b.p.nom || '', 'fr') || (a.p.prenom || '').localeCompare(b.p.prenom || '', 'fr'));
-    const fit = (t, f, size, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
+    const fit = (t, f, size, w) => { t = T(t); while (t.length > 1 && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
     const per = COLS * ROWS, pages = Math.max(1, Math.ceil(list.length / per));
     const nbPhotos = list.filter(r => api.photos.get(r.p.id)).length;
     for (let pg = 0; pg < pages; pg++) {
@@ -664,7 +664,7 @@ App.circo = (() => {
       let page = doc.addPage([W, H]), y = H - M, over = false;
       const S = v => v * k, Sc = v => v * kc;   // Sc : bilan chiffré, réduit en premier pour tenir sur une page
       const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(9.5), font: o.bold ? B : R, color: o.color || ink});
-      const fit = (t, f, size, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
+      const fit = (t, f, size, w) => { t = T(t); while (t.length > 1 && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
       const footer = () => page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
       const need = h => { if (y - h < M + 10) { if (paging) { page = doc.addPage([W, H]); y = H - M; footer(); } else over = true; } };
       const section = t => { y -= S(4); txt(t, M, y - S(11), {bold: true, size: S(12), color: blue}); y -= S(16); page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .7, color: blue}); y -= S(6); };
@@ -837,7 +837,7 @@ App.circo = (() => {
         const sg = single(r) && !!r[0];   // titre en première colonne
         r.forEach((t, j) => { let s1 = T(t); const fnt = first || sg ? B : R;
           let room = cw[j]; for (let k = j + 1; k < r.length && !r[k]; k++) room += cw[k];   // déborde sur les cases vides à droite
-          while (s1 && fnt.widthOfTextAtSize(s1, f) > room - 3) s1 = s1.slice(0, -2) + '…';
+          while (s1.length > 1 && fnt.widthOfTextAtSize(s1, f) > room - 3) s1 = s1.slice(0, -2) + '…';
           if (s1) pg.drawText(s1, {x: x + 2, y: y - rh + f * .4, size: f, font: fnt, color: ink}); x += cw[j]; });
         pg.drawLine({start: {x: M, y: y - rh}, end: {x: x, y: y - rh}, thickness: .4, color: grid}); y -= rh;
       });
@@ -855,7 +855,7 @@ App.circo = (() => {
     const Y = t => H - t;   // coordonnées depuis le haut
     const width = (t, f, sz) => f.widthOfTextAtSize(T(t), sz);
     const center = (t, f, sz, cx, top, color) => page.drawText(T(t), {x: cx - width(t, f, sz) / 2, y: Y(top), size: sz, font: f, color});
-    const fitT = (t, f, sz, w) => { t = T(t); while (t && f.widthOfTextAtSize(t, sz) > w) t = t.slice(0, -2) + '…'; return t; };
+    const fitT = (t, f, sz, w) => { t = T(t); while (t.length > 1 && f.widthOfTextAtSize(t, sz) > w) t = t.slice(0, -2) + '…'; return t; };
     const wrapT = (t, f, sz, w) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (f.widthOfTextAtSize(nx, sz) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
     const line = (x1, t1, x2, t2, color) => page.drawLine({start: {x: x1, y: Y(t1)}, end: {x: x2, y: Y(t2)}, thickness: 1.2, color});
     const MAXN = 6, HL = 10.5, NL = 12;

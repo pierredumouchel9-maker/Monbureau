@@ -134,7 +134,7 @@ App.registerSkill({
         txt(`${c.l[0].toUpperCase() + c.l.slice(1)} : ${items.length} territoire${items.length > 1 ? 's' : ''}`, M + 14, y - 2, {size: 11, bold: true}); y -= 16;
         for (let i = 0; i < items.length; i += ncol) {
           if (y < M + 14) newPage();
-          items.slice(i, i + ncol).forEach((t, j) => { const short = api.norm(t.id).startsWith(api.norm(asm) + ' ') ? t.id.slice(asm.length).trim() : t.id; const s = `${short}  ${t.last ? fr(t.last) : 'sans date'}`; let s1 = T(s); while (R.widthOfTextAtSize(s1, 7.5) > cw - 4) s1 = s1.slice(0, -2) + '…'; page.drawText(s1, {x: M + j * cw, y, size: 7.5, font: R, color: ink}); });
+          items.slice(i, i + ncol).forEach((t, j) => { const short = api.norm(t.id).startsWith(api.norm(asm) + ' ') ? t.id.slice(asm.length).trim() : t.id; const s = `${short}  ${t.last ? fr(t.last) : 'sans date'}`; let s1 = T(s); while (s1.length > 1 && R.widthOfTextAtSize(s1, 7.5) > cw - 4) s1 = s1.slice(0, -2) + '…'; page.drawText(s1, {x: M + j * cw, y, size: 7.5, font: R, color: ink}); });
           y -= lh;
         }
         y -= 10;
