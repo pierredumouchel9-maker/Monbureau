@@ -134,7 +134,7 @@ App.registerSkill({
       const names = asmNames(), t = today();
       return `${nowBanner(A)}${controle(A)}
         <div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><strong>${api.esc(A.titre)}</strong>
-          <div class="row small" style="gap:8px;flex-wrap:wrap"><label>Premier mardi : <input type="date" id="iDeb" value="${A.debut}"></label><button class="btn" id="iVac" title="Dates officielles de l’Éducation nationale">Vacances scolaires${A.vacMaj ? ' ✓' : ''}</button><button class="btn" id="iAddEnd">+ Semaine à la fin</button><button class="btn" id="iDelY">Supprimer l’année</button></div></div>
+          <div class="row small" style="gap:8px;flex-wrap:wrap"><label>Premier mardi : <input type="date" id="iDeb" value="${A.debut}"></label>${['A', 'B'].map(h => `<button class="btn" data-cyc="${h}" title="Lettre au CCA utilisée pour toutes les assemblées du cycle">✉︎ Lettre du cycle ${api.esc(cycleName(A, h))}${A.lettres?.[h] ? ' ✓' : ''}</button>`).join('')}<button class="btn" id="iVac" title="Dates officielles de l’Éducation nationale">Vacances scolaires${A.vacMaj ? ' ✓' : ''}</button><button class="btn" id="iAddEnd">+ Semaine à la fin</button><button class="btn" id="iDelY">Supprimer l’année</button></div></div>
           <datalist id="iList">${[...names, ...SPECIALS].map(n => `<option value="${api.esc(n)}">`).join('')}</datalist>
           <div class="table-wrap" style="max-height:70vh;margin-top:8px"><table class="list" style="font-size:.9rem"><thead><tr><th>Sem.</th><th>Du – au</th><th style="min-width:260px">Itinéraire</th><th>Type</th><th style="min-width:180px">Remarques</th><th>Vacances</th><th title="S-302">S-302</th><th title="jw.org">jw.org</th><th title="Courrier">Cour.</th><th style="min-width:200px">Tâche</th><th></th></tr></thead><tbody>
           ${A.semaines.map((r, i) => { const w = weekOf(A, i), now = t >= add(w.s, -1) && t <= w.e, bg = TYPES[r.type]?.bg || '#fff';
@@ -156,6 +156,7 @@ App.registerSkill({
       const redraw = () => { const s = keep(); api.save(); render(); const w = api.$('.table-wrap[style*="70vh"]', el); if (w) w.scrollTop = s; };
       api.$('#iDeb', el).onchange = e => { if (e.target.value) { A.debut = e.target.value; redraw(); } };
       api.$('#iAddEnd', el).onclick = () => { A.semaines.push(blank()); redraw(); };
+      for (const b of api.$$('[data-cyc]', el)) b.onclick = () => editCycleLetter(A, b.dataset.cyc);
       api.$('#iVac', el).onclick = async () => { if (A.semaines.some(r => r.zone) && !(await api.confirm('Vacances scolaires', 'La colonne « Vacances » sera remplacée par les dates officielles de l’Éducation nationale (data.education.gouv.fr).', 'Mettre à jour'))) return; if (await majVacances(A)) redraw(); };
       api.$('#iDelY', el).onclick = async () => { if (!(await api.confirm('Supprimer l’année', `Supprimer l’itinéraire « ${A.titre} » ?`, 'Supprimer', true))) return; store().annees.splice(store().annees.indexOf(A), 1); state.id = null; api.save(); render(); };
       if (api.$('#iPdf', el)) api.$('#iPdf', el).onclick = async () => { try { api.download(`Itinéraire ${A.titre}.pdf`, await pdf(A)); } catch (e) { api.toast('PDF impossible : ' + e.message, 'error'); } };
@@ -331,19 +332,49 @@ App.registerSkill({
         {label: 'Valider et cocher « S-302 »', kind: 'primary', onClick: el => { keep(el); r.s302 = true; api.save(); return 'ok'; }}]});
       render();
     }
+    /* Lettre du cycle : on modifie la lettre une fois par cycle (A : sept.–févr., B : mars–août) ;
+       elle sert ensuite à toutes les assemblées du cycle (objet, coordinateur et dates remplis automatiquement). */
+    const fixObjet = html => String(html || '').replace(/(dans\s+l['’]assembl[ée]e)\s*(?:…|\.\.\.)/i, '$1 de {{v_assemblee}}');
+    const cycleName = (A, h) => `${A.titre.replace(/\s*A et B\s*$/i, '').trim()} ${h}`;
+    function cycleModel(A, h) {   // la lettre du cycle, sinon celle du cycle précédent, sinon le modèle général
+      if (A.lettres?.[h]) return {html: A.lettres[h], from: cycleName(A, h), own: true};
+      const L = store().annees.slice().sort((a, b) => a.debut.localeCompare(b.debut)), k = L.indexOf(A);
+      const prev = [...(h === 'B' ? [[A, 'A']] : []), ...L.slice(0, k).reverse().flatMap(Y => [[Y, 'B'], [Y, 'A']])].find(([Y, hh]) => Y.lettres?.[hh]);
+      if (prev) return {html: prev[0].lettres[prev[1]], from: cycleName(prev[0], prev[1]), own: false};
+      return {html: fixObjet(ensureTpl('cour').body), from: 'modèle général', own: false};
+    }
+    // Les champs apparaissent comme des étiquettes non modifiables dans l'éditeur
+    const toChips = html => html.replace(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi, (m, k) => `<span data-champ="${k}" contenteditable="false" style="background:#e7f0fd;color:#1d4f91;border-radius:4px;padding:0 4px;font-weight:600">${api.esc(App.fields.label(k))}</span>`);
+    const fromChips = el => { const c = el.cloneNode(true); for (const x of c.querySelectorAll('[data-champ]')) x.replaceWith(`{{${x.dataset.champ}}}`); return c.innerHTML; };
+    async function editCycleLetter(A, h) {
+      const m = cycleModel(A, h);
+      const body = `<p class="small muted" style="margin-top:0">Lettre au CCA du <strong>cycle ${api.esc(cycleName(A, h))}</strong> (${h === 'A' ? 'septembre à février' : 'mars à août'})${m.own ? '' : ` — part de : ${api.esc(m.from)}`}.
+        Modifiez le texte (thèmes, cantiques, consignes…) : il servira pour toutes les assemblées du cycle. Les étiquettes bleues se remplissent seules pour chaque assemblée (objet, coordinateur, dates, date du jour).</p>
+        <div id="cEd" contenteditable="true" style="border:1px solid var(--line,#ddd);border-radius:8px;padding:28px 34px;background:#fff;max-height:60vh;overflow:auto;font-family:Helvetica,Arial,sans-serif;font-size:11pt;line-height:1.35">${toChips(fixObjet(m.html))}</div>
+        <label class="row small" style="gap:6px;margin-top:8px"><input type="checkbox" id="cGen" checked> Enregistrer aussi comme modèle général (point de départ des cycles suivants)</label>`;
+      const ok = await api.modal({title: `Lettre du cycle ${cycleName(A, h)}`, body, wide: true, actions: [
+        {label: 'Annuler', value: null},
+        ...(m.own ? [{label: 'Repartir du modèle général', onClick: el => { api.$('#cEd', el).innerHTML = toChips(fixObjet(ensureTpl('cour').body)); return false; }}] : []),
+        {label: 'Enregistrer pour le cycle', kind: 'primary', onClick: el => { const html = fromChips(api.$('#cEd', el)); (A.lettres ??= {})[h] = html;
+          if (api.$('#cGen', el).checked) { const t = ensureTpl('cour'); t.body = html; t.updated = new Date().toISOString(); }
+          // les visites du cycle reprennent la nouvelle lettre (sauf celles déjà envoyées)
+          A.semaines.forEach((r, k) => { if (r.docs?.cour && !r.cour && halfOf(weekOf(A, k).s) === h) delete r.docs.cour; });
+          api.save(); return 'ok'; }}]});
+      if (ok) { api.toast(`Lettre du cycle ${cycleName(A, h)} enregistrée : elle sera utilisée pour chaque assemblée du cycle.`); render(); }
+    }
     async function docFlow(A, i, kind) {
-      const r = A.semaines[i], w = weekOf(A, i), tpl = ensureTpl(kind), ctx = visiteCtx(r, w);
-      const merged = () => App.pdf.merge(tpl.body, App.fields.values({visite: ctx}));
+      const r = A.semaines[i], w = weekOf(A, i), tpl = ensureTpl(kind), ctx = visiteCtx(r, w), h = halfOf(w.s), cm = kind === 'cour' ? cycleModel(A, h) : null;
+      const merged = () => App.pdf.merge(kind === 'cour' ? fixObjet(cm.html) : tpl.body, App.fields.values({visite: ctx}));
       const lbl = kind === 's302' ? 'S-302' : 'Lettre au CCA', flag = kind === 's302' ? 's302' : 'cour';
       const fileName = App.pdf.fileName(`${kind === 's302' ? 'S-302' : 'Lettre CCA'} ${ctx.assemblee} ${w.s.toLocaleDateString('fr-FR').replace(/\//g, '-')}`) + '.pdf';
       const body = `<p class="small muted" style="margin-top:0">${api.esc(ctx.assemblee)} · semaine du ${api.esc(ctx.semaine)}${kind === 'cour' ? ` · coordinateur : ${api.esc(ctx.coordinateur)}` : ''}${r.docs?.[kind] ? ' · <strong>version modifiée pour cette visite</strong>' : ''}</p>
         <div id="dEd" contenteditable="true" style="border:1px solid var(--line,#ddd);border-radius:8px;padding:28px 34px;background:#fff;max-height:58vh;overflow:auto;font-family:Helvetica,Arial,sans-serif;font-size:11pt;line-height:1.35">${r.docs?.[kind] || merged()}</div>
-        <p class="small muted" style="margin:6px 0 0">Modifiez directement le texte pour cette visite. Le modèle commun se modifie dans Modèles › « ${api.esc(tpl.name)} ».</p>`;
+        <p class="small muted" style="margin:6px 0 0">${kind === 'cour' ? `Lettre du cycle ${api.esc(cycleName(A, h))} (${api.esc(cm.own ? 'modifiée pour ce cycle' : 'reprise de : ' + cm.from)}), remplie pour ${api.esc(ctx.assemblee)}. Pour changer la lettre de toutes les assemblées du cycle : bouton « Lettre du cycle » en haut de l’itinéraire. Une correction faite ici ne vaut que pour cette assemblée.` : `Modifiez directement le texte pour cette visite. Le modèle commun se modifie dans Modèles › « ${api.esc(tpl.name)} ».`}</p>`;
       const keep = el => { (r.docs ??= {})[kind] = api.$('#dEd', el).innerHTML; api.save(); };
       const blobOf = async el => new Blob([await App.pdf.render(api.$('#dEd', el).innerHTML, {title: lbl})], {type: 'application/pdf'});
       await api.modal({title: `${lbl} — ${ctx.assemblee}`, body, wide: true, actions: [
         {label: 'Fermer', value: null, onClick: el => { if (api.$('#dEd', el).innerHTML !== (r.docs?.[kind] || merged())) keep(el); }},
-        {label: 'Revenir au modèle', onClick: el => { api.$('#dEd', el).innerHTML = merged(); if (r.docs) delete r.docs[kind]; api.save(); return false; }},
+        {label: kind === 'cour' ? 'Revenir à la lettre du cycle' : 'Revenir au modèle', onClick: el => { api.$('#dEd', el).innerHTML = merged(); if (r.docs) delete r.docs[kind]; api.save(); return false; }},
         {label: 'PDF', onClick: async el => { keep(el); api.download(fileName, await blobOf(el)); return false; }},
         {label: 'Envoyer par mail…', onClick: async el => { keep(el); const blob = await blobOf(el);
           await App.mailer.open({asm: r.asm, blob, fileName, defaults: kind === 's302' ? ['CCA', 'Secrétaire'] : ['CCA'],
