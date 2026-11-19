@@ -251,7 +251,13 @@ App.registerSkill({
     }
     // Reprend la lettre au CCA du classeur Publipostage.xlsm (onglet « Lettre_CCA ») comme modèle modifiable
     async function importLettre() {
-      const file = await api.pickFile('.xlsm,.xlsx'); if (!file) return;
+      const file = await api.pickFile('.html,.htm,.xlsm,.xlsx'); if (!file) return;
+      if (/\.html?$/i.test(file.name)) {   // modèle prêt à l'emploi (mise en forme exacte : couleurs, surlignage, signature…)
+        const html = (await file.text()).replace(/<!--[\s\S]*?-->/g, '').trim();
+        if (!/<p|<div/i.test(html)) return api.toast('Ce fichier ne contient pas de lettre.', 'error');
+        const t = ensureTpl('cour'); t.body = html; t.updated = new Date().toISOString(); api.save();
+        return api.toast('Lettre au CCA enregistrée : modifiable dans Modèles › « Lettre au CCA — semaine spéciale ».');
+      }
       let sheets; try { sheets = await App.files.readXlsx(file); } catch (e) { return api.toast('Lecture impossible : ' + e.message, 'error'); }
       const sh = sheets.find(x => /lettre/i.test(x.name)); if (!sh) return api.toast('Onglet « Lettre_CCA » introuvable dans ce classeur.', 'error');
       const F = t => api.esc(String(t)).replace(/«\s*Coordinateur\s*»/gi, '{{v_coordinateur}}').replace(/«\s*SEMAINE_SPECIALE\s*»/gi, '{{v_semaine}}').replace(/«\s*ASSEMBLEES?\s*»/gi, '{{v_assemblee}}').replace(/\n/g, '<br>');
