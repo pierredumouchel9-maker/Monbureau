@@ -578,20 +578,24 @@ App.annuaire = (() => {
           <select id="aF" style="max-width:260px"><option value="">Toutes les assemblées</option>${[...d.congregations].sort((a, b) => a.nom.localeCompare(b.nom)).map(c => `<option ${filt === c.nom ? 'selected' : ''}>${api.esc(c.nom)}</option>`).join('')}</select>
           <select id="aFct" style="max-width:200px"><option value="">Toutes les fonctions</option>${FONCTIONS.map(v => `<option ${ffct === v ? 'selected' : ''}>${v}s</option>`).join('')}<option value="aucune" ${ffct === 'aucune' ? 'selected' : ''}>Sans fonction</option></select>
           <span class="small muted" id="aCount"></span></div>
-          <div class="table-wrap"><table class="list"><thead><tr><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr></thead><tbody id="aRows"></tbody></table></div>`;
+          <div class="table-wrap"><table class="list"><thead><tr><th style="width:48px"></th><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr></thead><tbody id="aRows"></tbody></table></div>`;
+        // Photo (ou initiales) en tête de ligne
+        const avatar = p => { const ph = api.photos.get(p.id);
+          return ph ? `<img src="${ph}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:50%;object-fit:cover;display:block">`
+            : `<div style="width:40px;height:40px;border-radius:50%;background:var(--line,#e5e7eb);color:var(--muted,#6b7280);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:600">${api.esc(((p.prenom || '')[0] || '') + ((p.nom || '')[0] || '')).toUpperCase()}</div>`; };
         const draw = () => {
           const nq = api.norm(q);
           const rows = d.persons.filter(p => (!filt || api.norm(p.assemblee) === api.norm(filt)) && (!ffct || (ffct === 'aucune' ? !p.fonction : p.fonction === ffct)) && (!nq || api.norm(Object.values(p).join(' ')).includes(nq)))
             .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr') || (a.prenom || '').localeCompare(b.prenom || '', 'fr'));
           const cnt = api.$('#aCount', el); if (cnt) cnt.textContent = `${rows.length} personne(s)`;
           const age = iso => { const n = yearsSince(iso); return iso ? `${fmtDate(iso)}<div class="small muted">${n} an${n > 1 ? 's' : ''}</div>` : ''; };
-          api.$('#aRows', el).innerHTML = rows.map(p => `<tr class="click" data-id="${p.id}"><td><strong>${api.esc((p.nom || '').toUpperCase())}</strong>${p.assemblee ? `<div class="small muted">${api.esc(p.assemblee)}</div>` : ''}</td>
+          api.$('#aRows', el).innerHTML = rows.map(p => `<tr class="click" data-id="${p.id}"><td style="padding:4px 6px">${avatar(p)}</td><td><strong>${api.esc((p.nom || '').toUpperCase())}</strong>${p.assemblee ? `<div class="small muted">${api.esc(p.assemblee)}</div>` : ''}</td>
             <td>${api.esc(p.prenom)}</td><td>${age(p.naissance)}</td><td>${age(p.bapteme)}</td><td>${p.fonction ? `<span class="pill ${p.fonction === 'Ancien' ? 'ok' : ''}">${api.esc(p.fonction)}</span>` : ''}</td><td style="white-space:nowrap">${api.esc(p.telephone)}</td>
             <td>${p.email ? `<a href="mailto:${api.esc(p.email)}" onclick="event.stopPropagation()">${api.esc(p.email)}</a>` : ''}${emailOk(p.email) ? '' : ' <span class="pill warn">à vérifier</span>'}</td>
             <td>${api.esc(p.adresse)}</td><td>${api.esc(p.cp)}</td><td>${api.esc(p.ville)}</td></tr>`).join('')
-            || `<tr><td colspan="10" class="muted">${d.persons.length ? 'Aucun résultat.' : 'L’annuaire est vide. Ajoutez une personne ou importez un fichier Excel.'}</td></tr>`;
+            || `<tr><td colspan="11" class="muted">${d.persons.length ? 'Aucun résultat.' : 'L’annuaire est vide. Ajoutez une personne ou importez un fichier Excel.'}</td></tr>`;
         };
-        draw();
+        draw(); api.photos.load().then(() => { if (api.$('#aRows', el)) draw(); });   // les photos arrivent juste après (déchiffrement)
         api.$('#aQ', el).addEventListener('input', e => { q = e.target.value; draw(); });
         api.$('#aF', el).addEventListener('change', e => { filt = e.target.value; draw(); });
         api.$('#aFct', el).addEventListener('change', e => { ffct = e.target.value === 'aucune' ? 'aucune' : e.target.value.replace(/s$/, ''); draw(); });
