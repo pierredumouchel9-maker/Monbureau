@@ -38,8 +38,9 @@ App.s13 = (() => {
   function columns(pages) {
     const terr = [];
     pages.forEach((cells, pg) => {
+      // modèle S-13-Z : au moins deux en-têtes « N° <territoire> » sur la page (un « N° » seul sous « Terr. » = modèle en tableau)
+      if (cells.filter(c => /^N[°o]\s*\S/.test(c.text)).length < 2) return;
       const heads = cells.filter(c => /^N[°o]\s*\S/.test(c.text) || /^N[°o]\s*$/.test(c.text));
-      if (heads.length < 2 && !(heads.length === 1 && cells.some(c => /^terr\.?$/i.test(c.text)))) return;
       heads.sort((a, b) => a.x - b.x);
       const cols = heads.map((h, i) => ({id: h.text.replace(/^N[°o]\s*/, '').trim(), x0: h.x - 6, x1: i + 1 < heads.length ? heads[i + 1].x - 6 : Infinity, y: h.y, dates: [], page: pg + 1}));
       for (const c of cells) {
@@ -52,25 +53,30 @@ App.s13 = (() => {
     });
     return terr;
   }
-  // Modèle en tableau : un territoire par ligne (identifiant à gauche), dates sur la ligne ou les lignes suivantes
+  // Modèle en tableau (ex. Territory Helper) : une page par secteur (« Terr. n° : BARBERY »), une ligne par territoire (n° à gauche) ;
+  // le nom de l'attributaire est juste au-dessus du n°, les dates « attribué le / entièrement parcouru le » juste en dessous.
+  const ID_RE = /^(?:[A-Za-zÀ-ÿ]{1,15}[.\s_-]?)?\d{1,4}[A-Za-z]?(?:[\s-][A-Za-z0-9]{1,3})?$/;   // 12, C-11, 3A, Hubert.01…
   function rows(pages) {
     const terr = [];
     pages.forEach((cells, pg) => {
-      const body = cells.filter(c => !HEADER.test(c.text.trim()));
-      if (!body.length) return;
-      const lines = [];
-      for (const c of [...body].sort((a, b) => a.y - b.y || a.x - b.x)) { const l = lines.find(l => sameLine(l, c)); l ? l.cells.push(c) : lines.push({y: c.y, h: c.h, cells: [c]}); }
-      const dated = lines.filter(l => l.cells.some(c => datesIn(c.text).length));
-      const left = Math.min(...(dated.length ? dated : lines).map(l => Math.min(...l.cells.map(c => c.x))));
-      let cur = null;
-      for (const l of lines) {
-        l.cells.sort((a, b) => a.x - b.x);
-        const first = l.cells[0], ds = l.cells.flatMap(c => datesIn(c.text));
-        const idLike = first.x <= left + 25 && !datesIn(first.text).length && /^[A-Za-z]{0,4}[\s-]?\d{1,4}[A-Za-z0-9 \-]*$|^\d/.test(first.text.trim()) && first.text.trim().length <= 20;
-        if (idLike) { cur = {id: first.text.trim(), dates: ds, page: pg + 1}; terr.push(cur); }
-        else if (ds.length) { if (cur && l.y - cur.y < 40) cur.dates.push(...ds); else { cur = {id: '', dates: ds, page: pg + 1}; terr.push(cur); } }
-        if (cur) cur.y = l.y;
+      const lab = cells.find(c => /terr\.?\s*n[°o]\s*:?$/i.test(c.text) || /^terr\.?\s*n[°o]\s*:/i.test(c.text));
+      let title = '';
+      if (lab) { const inl = lab.text.replace(/^terr\.?\s*n[°o]\s*:?\s*/i, '').trim(); title = inl || (cells.filter(c => c !== lab && sameLine(c, lab) && c.x > lab.x).sort((a, b) => a.x - b.x)[0]?.text || '').trim(); }
+      const headY = Math.max(lab ? lab.y : 0, ...cells.filter(c => /^(le|parcouru|n[°o]|terr\.?|attribu[ée]e?|entièrement|dernière fois le\**|parcouru la)$/i.test(c.text.trim())).map(c => c.y));
+      const foot = Math.min(...cells.filter(c => /^\*\*|^s-13\b/i.test(c.text.trim())).map(c => c.y), Infinity);
+      const body = cells.filter(c => c.y > headY + 1 && c.y < foot - 1);
+      const cand = body.filter(c => ID_RE.test(c.text.trim()) && !datesIn(c.text).length);
+      const minX = Math.min(...cand.map(c => c.x)), ids = cand.filter(c => c.x <= minX + 15).sort((a, b) => a.y - b.y);
+      const dated = body.filter(c => datesIn(c.text).length);
+      if (!ids.length) {   // pas de numéros : une ligne datée = un territoire
+        const lines = []; for (const c of dated) { const l = lines.find(l => sameLine(l, c)); l ? l.cells.push(c) : lines.push({y: c.y, h: c.h, cells: [c]}); }
+        for (const l of lines) terr.push({id: title, dates: l.cells.flatMap(c => datesIn(c.text)), page: pg + 1});
+        return;
       }
+      const gap = ids.length > 1 ? (ids.at(-1).y - ids[0].y) / (ids.length - 1) : 30;
+      const bands = ids.map((c, k) => ({c, lo: k ? (ids[k - 1].y + c.y) / 2 : c.y - gap / 2, hi: k + 1 < ids.length ? (c.y + ids[k + 1].y) / 2 : c.y + gap / 2, dates: []}));
+      for (const c of dated) { const b = bands.find(b => c.y >= b.lo && c.y < b.hi) || (c.y < bands[0].lo ? bands[0] : null); if (b) b.dates.push(...datesIn(c.text)); }
+      for (const b of bands) terr.push({id: title ? `${title} ${b.c.text.trim()}` : b.c.text.trim(), dates: b.dates, page: pg + 1});
     });
     return terr;
   }

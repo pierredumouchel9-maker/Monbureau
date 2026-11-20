@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.26.0';
+  const VERSION = '0.26.1';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -370,8 +370,12 @@ const App = (() => {
     return new Promise(res => {
       const i = document.createElement('input'); i.type = 'file'; i.accept = accept;
       i.style.display = 'none'; document.body.appendChild(i);
-      const done = v => { res(v); i.remove(); };
-      i.addEventListener('change', () => done(i.files[0] || null));
+      const done = v => { res(v); setTimeout(() => i.remove(), 0); };
+      // Safari (iPhone, iPad, Mac) : le fichier devient illisible une fois le champ retiré de la page
+      // (« The object can not be found here ») → on le copie en mémoire avant de retirer le champ.
+      i.addEventListener('change', async () => { const f = i.files[0]; if (!f) return done(null);
+        try { done(new File([await f.arrayBuffer()], f.name, {type: f.type, lastModified: f.lastModified})); }
+        catch (e) { toast('Fichier illisible : ' + e.message + '. S’il est dans iCloud ou Dropbox, téléchargez-le d’abord sur l’appareil.', 'error'); done(null); } });
       i.addEventListener('cancel', () => done(null));
       i.click();
     });

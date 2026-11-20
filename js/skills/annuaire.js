@@ -71,8 +71,11 @@ App.annuaire = (() => {
   }
   const pickImages = (multiple = true) => new Promise(res => {
     const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.multiple = multiple; i.style.display = 'none'; document.body.appendChild(i);
-    const done = v => { res(v); i.remove(); };
-    i.addEventListener('change', () => done([...i.files])); i.addEventListener('cancel', () => done([])); i.click();
+    const done = v => { res(v); setTimeout(() => i.remove(), 0); };
+    i.addEventListener('change', async () => { const out = [];   // copie en mémoire avant de retirer le champ (Safari)
+      for (const f of [...i.files]) { try { out.push(new File([await f.arrayBuffer()], f.name, {type: f.type, lastModified: f.lastModified})); } catch { /* fichier inaccessible : ignoré */ } }
+      done(out); });
+    i.addEventListener('cancel', () => done([])); i.click();
   });
   // Photos déposées en nombre : rattachées d'après le nom du fichier (« NOM Prénom.jpg », « Prénom_NOM.png »…)
   async function importPhotos(files) {
