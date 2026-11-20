@@ -576,7 +576,10 @@ App.annuaire = (() => {
       if (tab === 'personnes') {
         body.innerHTML = `<div class="row" style="margin-bottom:12px"><input type="search" id="aQ" placeholder="Rechercher (nom, assemblée, mail…)" value="${api.esc(q)}" style="max-width:340px">
           <select id="aF" style="max-width:260px"><option value="">Toutes les assemblées</option>${[...d.congregations].sort((a, b) => a.nom.localeCompare(b.nom)).map(c => `<option ${filt === c.nom ? 'selected' : ''}>${api.esc(c.nom)}</option>`).join('')}</select>
-          <select id="aFct" style="max-width:200px"><option value="">Toutes les fonctions</option>${FONCTIONS.map(v => `<option ${ffct === v ? 'selected' : ''}>${v}s</option>`).join('')}<option value="aucune" ${ffct === 'aucune' ? 'selected' : ''}>Sans fonction</option></select>
+          <select id="aFct" style="max-width:220px"><option value="">Tous</option>
+            <optgroup label="Fonction">${FONCTIONS.map(v => `<option value="f:${v}" ${ffct === 'f:' + v ? 'selected' : ''}>${v}s</option>`).join('')}<option value="aucune" ${ffct === 'aucune' ? 'selected' : ''}>Sans fonction</option></optgroup>
+            <optgroup label="Pionniers">${['PP', 'PS'].map(v => `<option value="s:${v}" ${ffct === 's:' + v ? 'selected' : ''}>${v === 'PP' ? 'PP (pionniers permanents)' : 'PS (pionniers spéciaux)'}</option>`).join('')}</optgroup>
+            <optgroup label="Responsabilités">${['CCA', 'Secrétaire', 'Resp. Prédication', 'CLH'].map(v => `<option value="r:${v}" ${ffct === 'r:' + v ? 'selected' : ''}>${v}</option>`).join('')}</optgroup></select>
           <span class="small muted" id="aCount"></span></div>
           <div class="table-wrap"><table class="list"><thead><tr><th style="width:48px"></th><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr></thead><tbody id="aRows"></tbody></table></div>`;
         // Photo (ou initiales) en tête de ligne
@@ -585,7 +588,12 @@ App.annuaire = (() => {
             : `<div style="width:40px;height:40px;border-radius:50%;background:var(--line,#e5e7eb);color:var(--muted,#6b7280);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:600">${api.esc(((p.prenom || '')[0] || '') + ((p.nom || '')[0] || '')).toUpperCase()}</div>`; };
         const draw = () => {
           const nq = api.norm(q);
-          const rows = d.persons.filter(p => (!filt || api.norm(p.assemblee) === api.norm(filt)) && (!ffct || (ffct === 'aucune' ? !p.fonction : p.fonction === ffct)) && (!nq || api.norm(Object.values(p).join(' ')).includes(nq)))
+          // statut de pionnier : le plus récent noté dans l'analyse de la circonscription
+          const circ = api.moduleData('circonscription', {cycles: [], suivi: {}}), cyc = [...(circ.cycles || [])].sort((a, b) => b.code.localeCompare(a.code));
+          const statutOf = p => { for (const c of cyc) { const e = circ.suivi?.[c.id]?.[p.id]; if (e && e.statut !== undefined) return e.statut || ''; } return ''; };
+          const okF = p => !ffct ? true : ffct === 'aucune' ? !p.fonction : ffct.startsWith('f:') ? p.fonction === ffct.slice(2)
+            : ffct.startsWith('s:') ? statutOf(p) === ffct.slice(2) : ffct.startsWith('r:') ? (p.resp || []).includes(ffct.slice(2)) : true;
+          const rows = d.persons.filter(p => (!filt || api.norm(p.assemblee) === api.norm(filt)) && okF(p) && (!nq || api.norm(Object.values(p).join(' ')).includes(nq)))
             .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr') || (a.prenom || '').localeCompare(b.prenom || '', 'fr'));
           const cnt = api.$('#aCount', el); if (cnt) cnt.textContent = `${rows.length} personne(s)`;
           const age = iso => { const n = yearsSince(iso); return iso ? `${fmtDate(iso)}<div class="small muted">${n} an${n > 1 ? 's' : ''}</div>` : ''; };
@@ -598,7 +606,7 @@ App.annuaire = (() => {
         draw(); api.photos.load().then(() => { if (api.$('#aRows', el)) draw(); });   // les photos arrivent juste après (déchiffrement)
         api.$('#aQ', el).addEventListener('input', e => { q = e.target.value; draw(); });
         api.$('#aF', el).addEventListener('change', e => { filt = e.target.value; draw(); });
-        api.$('#aFct', el).addEventListener('change', e => { ffct = e.target.value === 'aucune' ? 'aucune' : e.target.value.replace(/s$/, ''); draw(); });
+        api.$('#aFct', el).addEventListener('change', e => { ffct = e.target.value; draw(); });
         api.$('#aRows', el).addEventListener('click', async e => { const tr = e.target.closest('tr[data-id]'); if (!tr) return; if (await editPerson(d.persons.find(p => p.id === tr.dataset.id))) render(); });
       } else {
         const count = n => d.persons.filter(p => api.norm(p.assemblee) === api.norm(n)).length;
