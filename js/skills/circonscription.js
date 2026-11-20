@@ -583,6 +583,18 @@ App.circo = (() => {
   }
 
   // Bilan imprimable d'une assemblée pour un cycle — une page A4 paysage (la taille du texte s'adapte pour tenir)
+  // Photo en médaillon : image recadrée au centre et découpée en cercle, avec un fin liseré
+  function medal(page, im, x, y, d) {
+    const L = window.PDFLib, r = d / 2, cx = x + r, cy = y + r, k = 0.5523 * r;
+    page.pushOperators(L.pushGraphicsState(), L.moveTo(cx + r, cy),
+      L.appendBezierCurve(cx + r, cy + k, cx + k, cy + r, cx, cy + r), L.appendBezierCurve(cx - k, cy + r, cx - r, cy + k, cx - r, cy),
+      L.appendBezierCurve(cx - r, cy - k, cx - k, cy - r, cx, cy - r), L.appendBezierCurve(cx + k, cy - r, cx + r, cy - k, cx + r, cy),
+      L.closePath(), L.clip(), L.endPath());
+    const sc = d / Math.min(im.width, im.height), w = im.width * sc, h = im.height * sc;
+    page.drawImage(im, {x: cx - w / 2, y: cy - h / 2, width: w, height: h});
+    page.pushOperators(L.popGraphicsState());
+    page.drawCircle({x: cx, y: cy, size: r, borderColor: L.rgb(.75, .78, .82), borderWidth: .6});
+  }
   async function bilanPdf(c, asm, statItems, rows, allRows = rows) {
     const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
     const plain = h => String(h || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;|&rsquo;/g, '’').replace(/&quot;/g, '"').trim();
@@ -727,8 +739,8 @@ App.circo = (() => {
           else if (bk.bi % 2 === 0) page.drawRectangle({x: x0 - 2, y: yc - hR, width: cw + 4, height: hR, color: ciel});
           let tx = x0;
           if (withPhoto) {
-            const im = await photoOf(bk.pid); if (im) page.drawImage(im, {x: x0, y: yc - phS - S(1.5), width: phS, height: phS});
-            if (twoPh) { const im2 = bk.sub ? await photoOf(bk.sub.pid) : null; if (im2) page.drawImage(im2, {x: x0 + phS + S(2), y: yc - phS - S(1.5), width: phS, height: phS}); }
+            const im = await photoOf(bk.pid); if (im) medal(page, im, x0, yc - phS - S(1.5), phS);
+            if (twoPh) { const im2 = bk.sub ? await photoOf(bk.sub.pid) : null; if (im2) medal(page, im2, x0 + phS + S(2), yc - phS - S(1.5), phS); }
             tx = x0 + (twoPh ? 2 * phS + S(6) : phS + S(4));
           }
           const wmax = cw - (tx - x0);
