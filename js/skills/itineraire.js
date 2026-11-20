@@ -58,7 +58,9 @@ App.registerSkill({
       if (asmOf(label)) return /\bsrc\b|suppl[ée]ant/.test(t) ? 'src' : 'visite';
       return t ? 'autre' : 'autre';
     }
-    const isV = t => t === 'visite' || t === 'src';   // visite assurée par moi ou par le suppléant (SRC)
+    const isV = t => t === 'visite' || t === 'src';
+    // Texte de la colonne « Itinéraire » : assemblées et Mémorial en rouge gras, formations en bleu foncé gras
+    const TXT = {ac: '#c00000', ar: '#c00000', memorial: '#c00000', formation: '#1f3f66'};   // visite assurée par moi ou par le suppléant (SRC)
     // Dates
     const D = iso => new Date(iso + 'T00:00');
     const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -168,7 +170,7 @@ App.registerSkill({
             const late = isV(r.type) && (!r.s302 || !r.cour) && t >= add(w.s, -App.itineraire.DELAI) && w.e >= t;
             return `${sep ? `<tr class="cyc-sep"><td colspan="11" style="background:#1f3f66;color:#fff;font-weight:600;padding:6px 10px;${i ? 'border-top:4px solid #fff' : ''}">Cycle ${api.esc(cycleName(A, h))} — ${h === 'A' ? 'septembre à février' : 'mars à août'}</td></tr>` : ''}<tr data-i="${i}" style="background:${bg};${now ? 'outline:2px solid var(--accent,#2f6fd6);' : ''}${late ? 'box-shadow:inset 5px 0 0 #d43131;' : ''}"${late ? ` title="À envoyer : ${[!r.s302 && 'S-302', !r.cour && 'lettre aux anciens'].filter(Boolean).join(', ')}"` : ''}>
               <td><strong>${w.n}</strong></td><td class="small" style="white-space:nowrap">${dd(w.s)} – ${dd(w.e)}</td>
-              <td><input list="iList" data-f="libelle" value="${api.esc(r.libelle)}" style="width:100%;font-weight:${isV(r.type) ? 600 : 400}">${isV(r.type) && !r.asm ? '<div class="small" style="color:var(--danger,#c00)">assemblée non reconnue</div>' : ''}</td>
+              <td><input list="iList" data-f="libelle" value="${api.esc(r.libelle)}" style="width:100%;font-weight:${TXT[r.type] ? 700 : isV(r.type) ? 600 : 400};${TXT[r.type] ? `color:${TXT[r.type]}` : ''}">${isV(r.type) && !r.asm ? '<div class="small" style="color:var(--danger,#c00)">assemblée non reconnue</div>' : ''}</td>
               <td><select data-f="type" style="min-width:140px">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}"${r.type === k ? ' selected' : ''}>${v.l}</option>`).join('')}</select></td>
               <td><input data-f="note" value="${api.esc(r.note || '')}" style="width:100%"></td>
               <td><input data-f="zone" value="${api.esc(r.zone || '')}" title="${api.esc(r.vacNom || '')}" style="width:110px"></td>
@@ -484,7 +486,7 @@ App.registerSkill({
         }
         if (bg !== '#ffffff') page.drawRectangle({x: M, y: y - rh, width: W - 2 * M, height: rh, color: hex(bg)});
         const vals = [String(w.n), `${dd(w.s)} – ${dd(w.e)}`, r.libelle, r.note, r.zone, r.s302 ? 'X' : '', r.jw ? 'X' : '', r.cour ? 'X' : ''];
-        x = M; vals.forEach((v, j) => { let s = T(v); const f = j === 2 && !isV(r.type) ? B : R; while (s.length > 1 && f.widthOfTextAtSize(s, fs) > cols[j][1] - 4) s = s.slice(0, -2) + '…'; if (s) page.drawText(s, {x: x + 2, y: y - rh + 4, size: fs, font: f, color: j === 3 ? mute : ink}); x += cols[j][1]; });
+        x = M; vals.forEach((v, j) => { let s = T(v); const f = j === 2 && (!isV(r.type) || TXT[r.type]) ? B : R; while (s.length > 1 && f.widthOfTextAtSize(s, fs) > cols[j][1] - 4) s = s.slice(0, -2) + '…'; if (s) page.drawText(s, {x: x + 2, y: y - rh + 4, size: fs, font: f, color: j === 3 ? mute : j === 2 && TXT[r.type] ? hex(TXT[r.type]) : ink}); x += cols[j][1]; });
         y -= rh; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .3, color: line});
       });
       page.drawText(T(`Mon Bureau · imprimé le ${api.dateLongue()}`), {x: M, y: 14, size: 7, font: R, color: mute});
