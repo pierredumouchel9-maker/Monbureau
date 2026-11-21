@@ -5,7 +5,7 @@ App.annuaire = (() => {
   const FIELDS = [
     {key: 'civilite', label: 'Civilité'}, {key: 'prenom', label: 'Prénom'}, {key: 'nom', label: 'Nom'},
     {key: 'naissance', label: 'Date de naissance'}, {key: 'bapteme', label: 'Date de baptême'}, {key: 'fonction', label: 'Fonction'},
-    {key: 'telephone', label: 'Portable'}, {key: 'assemblee', label: 'Assemblée'}, {key: 'email', label: 'Mail'},
+    {key: 'telephone', label: 'Portable'}, {key: 'fixe', label: 'Fixe'}, {key: 'assemblee', label: 'Assemblée'}, {key: 'email', label: 'Mail'},
     {key: 'adresse', label: 'Adresse'}, {key: 'cp', label: 'Code postal'}, {key: 'ville', label: 'Ville'}, {key: 'notes', label: 'Notes'}
   ];
   const keyOf = p => api.norm(`${p.prenom || ''} ${p.nom || ''}`);
@@ -219,6 +219,7 @@ App.annuaire = (() => {
       <label class="field"><span>Date de baptême</span><input type="date" name="bapteme" value="${api.esc(p.bapteme)}" max="${new Date().toISOString().slice(0, 10)}"></label>
       <label class="field"><span>Fonction</span><select name="fonction"><option value=""></option>${FONCTIONS.map(v => `<option ${p.fonction === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="field"><span>Portable</span><input type="tel" name="telephone" value="${api.esc(p.telephone)}"></label>
+      <label class="field"><span>Fixe</span><input type="tel" name="fixe" value="${api.esc(p.fixe)}"></label>
       <label class="field"><span>Assemblée</span><input type="text" name="assemblee" list="congList" value="${api.esc(p.assemblee)}"><datalist id="congList">${congs}</datalist></label>
       <label class="field"><span>Mail</span><input type="email" name="email" value="${api.esc(p.email)}"></label>
       <label class="field wide"><span>Adresse</span><input type="text" name="adresse" value="${api.esc(p.adresse)}"></label>
@@ -233,7 +234,7 @@ App.annuaire = (() => {
     }});
     actions.push({label: 'Annuler', value: null}, {label: 'Enregistrer', kind: 'primary', onClick: async b => {
       const f = api.$('form', b), err = api.$('#pErr', b);
-      for (const k of ['civilite', 'prenom', 'nom', 'naissance', 'bapteme', 'fonction', 'assemblee', 'telephone', 'email', 'adresse', 'cp', 'ville', 'notes']) p[k] = f[k].value.trim();
+      for (const k of ['civilite', 'prenom', 'nom', 'naissance', 'bapteme', 'fonction', 'assemblee', 'telephone', 'fixe', 'email', 'adresse', 'cp', 'ville', 'notes']) p[k] = f[k].value.trim();
       if (p.naissance && p.bapteme && p.bapteme < p.naissance) { err.textContent = 'La date de baptême est antérieure à la date de naissance.'; err.classList.remove('hidden'); return false; }
       p.nom = p.nom.toUpperCase();
       if (!p.prenom && !p.nom) { err.textContent = 'Indiquez au moins un prénom ou un nom.'; err.classList.remove('hidden'); return false; }
@@ -279,13 +280,13 @@ App.annuaire = (() => {
   /* ---------- Import Excel / CSV ---------- */
   const GUESS = [
     ['email', /mail|courriel/], ['nom_complet', /nom.*prenom|prenom.*nom|nom complet|participant/], ['prenom', /prenom/],
-    ['nom', /^nom$|nom de famille/], ['civilite', /^(f s|f|civilite|frere soeur|titre)$/], ['telephone', /\btel\b|telephone|portable|mobile|gsm/],
+    ['nom', /^nom$|nom de famille/], ['civilite', /^(f s|f|civilite|frere soeur|titre)$/], ['fixe', /fixe|domicile/], ['telephone', /\btel\b|telephone|portable|mobile|gsm/],
     ['fonction', /^(fonction|fct|a ass|attribution|role|privilege)$/], ['assemblee', /assemblee|congregation/], ['naissance', /date de naiss|naissance|ne le/], ['bapteme', /jour bapt|date de bapt|date bapt|bapteme le/], ['bapteme', /bapteme|bapt/], ['cp', /^cp$|code postal/], ['ville', /^ville$|commune|localite/], ['adresse', /adresse/]
   ];
   // Fiches présentées à la verticale (« Nom : DUPONT » ou « Nom » | « DUPONT » sur deux colonnes, une fiche après l'autre) :
   // on les transforme en tableau classique, une ligne par personne.
-  const LABELS = [['nom', /^nom( de famille)?$/], ['prenom', /^prenoms?$/], ['nom_complet', /^(nom et prenom|nom prenom|prenom nom|nom complet|proclamateur)$/], ['adresse', /^adresse$/], ['cp', /^(cp|code postal|cp ville|cp et ville|code postal ville|code postal et ville)$/], ['ville', /^(ville|commune)$/], ['telephone', /^(tel|telephone|portable|mobile|gsm|tel portable)$/], ['email', /^(mail|e mail|email|courriel)$/], ['naissance', /^(date de naissance|naissance|ne le|nee le)$/], ['bapteme', /^(date de bapteme|bapteme|baptise le|baptisee le)$/], ['fonction', /^(fonction|privilege)$/], ['assemblee', /^(assemblee|congregation)$/]];
-  const HEAD_OF = {nom: 'Nom', prenom: 'Prénom', nom_complet: 'Nom et prénom', adresse: 'Adresse', cp: 'Code postal', ville: 'Ville', telephone: 'Portable', email: 'Mail', naissance: 'Date de naissance', bapteme: 'Date de baptême', fonction: 'Fonction', assemblee: 'Assemblée'};
+  const LABELS = [['nom', /^nom( de famille)?$/], ['prenom', /^prenoms?$/], ['nom_complet', /^(nom et prenom|nom prenom|prenom nom|nom complet|proclamateur)$/], ['adresse', /^adresse$/], ['cp', /^(cp|code postal|cp ville|cp et ville|code postal ville|code postal et ville)$/], ['ville', /^(ville|commune)$/], ['fixe', /^(fixe|tel fixe|telephone fixe|domicile|tel domicile)$/], ['telephone', /^(tel|telephone|portable|mobile|gsm|tel portable)$/], ['email', /^(mail|e mail|email|courriel)$/], ['naissance', /^(date de naissance|naissance|ne le|nee le)$/], ['bapteme', /^(date de bapteme|bapteme|baptise le|baptisee le)$/], ['fonction', /^(fonction|privilege)$/], ['assemblee', /^(assemblee|congregation)$/]];
+  const HEAD_OF = {nom: 'Nom', prenom: 'Prénom', nom_complet: 'Nom et prénom', adresse: 'Adresse', cp: 'Code postal', ville: 'Ville', telephone: 'Portable', fixe: 'Fixe', email: 'Mail', naissance: 'Date de naissance', bapteme: 'Date de baptême', fonction: 'Fonction', assemblee: 'Assemblée'};
   function verticalToTable(sheet) {
     const cells = [];
     for (const r of sheet.rows) {
@@ -311,7 +312,7 @@ App.annuaire = (() => {
 
   async function importFlow(onDone, mode = 'import') {
     const compare = mode === 'compare';
-    const file = await api.pickFile('.xlsx,.xlsm,.csv,.pdf'); if (!file) return;
+    const file = await api.pickFile('.xlsx,.xlsm,.csv,.tsv,.pdf,.docx,.txt'); if (!file) return;
     let sheets;
     try { sheets = await App.files.readTable(file); } catch (e) { return api.toast('Lecture impossible : ' + e.message, 'error'); }
     sheets = sheets.filter(s => s.rows.some(r => r.some(c => String(c).trim()))).map(verticalToTable);
@@ -323,7 +324,7 @@ App.annuaire = (() => {
     const result = await api.modal({title: compare ? 'Mettre à jour l’annuaire depuis un fichier' : 'Importer dans l’annuaire', wide: true, body: `
       ${compare ? '<div class="notice small">Choisissez la feuille et vérifiez les colonnes : l’étape suivante compare le fichier avec l’annuaire et vous laisse valider chaque changement.</div>' : ''}
       <div class="stack"><p class="muted small" style="margin:0">Fichier : ${api.esc(file.name)}</p>
-      <div class="form-grid"><label class="field"><span>Feuille</span><select id="impSheet">${sheets.map((s, i) => `<option value="${i}">${api.esc(s.name)} (${s.rows.length} lignes)</option>`).join('')}</select></label>
+      <div class="form-grid"><label class="field"><span>${sheets.length > 1 && /\.(pdf|docx|txt)$/i.test(file.name) ? 'Méthode de lecture' : 'Feuille'}</span><select id="impSheet">${sheets.map((s, i) => { const base = file.name.replace(/\.[^.]+$/, ''), n = s.name.startsWith(base + ' — ') ? s.name.slice(base.length + 3) : s.name; return `<option value="${i}">${api.esc(n.charAt(0).toUpperCase() + n.slice(1))}${/\(\d+ (personnes|proclamateurs)\)/.test(n) ? '' : ` (${s.rows.length} lignes)`}</option>`; }).join('')}</select></label>
       <label class="field"><span>Ligne des titres de colonnes (0 = aucune)</span><input type="number" id="impHead" min="0"></label>
       <label class="field"><span>Assemblée à appliquer si elle manque</span><input type="text" id="impCong" list="impCongList" placeholder="(aucune)"><datalist id="impCongList">${api.data.congregations.map(c => `<option value="${api.esc(c.nom)}">`).join('')}</datalist></label></div>
       <div id="impMap" class="form-grid"></div><div id="impPrev"></div></div>`,
@@ -352,6 +353,8 @@ App.annuaire = (() => {
           const share = (i, test) => { const v = vals(i); return v.length >= 2 ? v.filter(test).length / v.length : 0; };
           const pick = (k, test, min = 0.6) => { if (k in guess) return; const c = cols.filter(c => !used.has(c.i)).map(c => [c.i, share(c.i, test)]).filter(x => x[1] >= min).sort((a, b) => b[1] - a[1])[0]; if (c) { guess[k] = c[0]; used.add(c[0]); } };
           pick('email', v => /^[^\s@]+@[^\s@]+$/.test(v));
+          pick('telephone', v => /^(\+33\s?|0)[67]([ .-]?\d{2}){4}$/.test(v));
+          pick('fixe', v => /^(\+33\s?|0)[1-59]([ .-]?\d{2}){4}$/.test(v));
           pick('telephone', v => /^(\+33\s?|0)[1-9]([ .-]?\d{2}){4}$/.test(v));
           // Dates sans titre reconnu : la plus ancienne est la naissance, l'autre le baptême
           if (!('naissance' in guess) || !('bapteme' in guess)) {
@@ -406,7 +409,10 @@ App.annuaire = (() => {
             const mV = !cpv && /^(\d{2}) ?(\d{3})\s+(.+)$/.exec(vil); if (mV) { cpv = mV[1] + mV[2]; vil = mV[3].trim(); }
             // Assemblée laissée vide sous une cellule fusionnée : on reprend celle du dessus.
             let cong = get('assemblee'); if (map.assemblee !== undefined) { if (cong) lastCong = cong; else cong = lastCong; }
-            people.push({civilite: civ(get('civilite')), prenom, nom: nom.toUpperCase(), naissance: parseDate(raw('naissance')), bapteme: parseDate(raw('bapteme')), fonction: fct(get('fonction')), assemblee: cong || api.$('#impCong', b).value.trim().toUpperCase(), telephone: get('telephone'),
+            // Portables (06, 07) et fixes rangés chacun à sa place, même s'ils sont mélangés dans une colonne
+            const tl = App.files.telsIn(get('telephone') + ' ' + get('fixe'));
+            const tel = tl.mob[0] || (!tl.fixe.length ? get('telephone') : ''), fixe = tl.fixe[0] || (!tl.mob.length && !tl.fixe.length ? get('fixe') : '');
+            people.push({civilite: civ(get('civilite')), prenom, nom: nom.toUpperCase(), naissance: parseDate(raw('naissance')), bapteme: parseDate(raw('bapteme')), fonction: fct(get('fonction')), assemblee: cong || api.$('#impCong', b).value.trim().toUpperCase(), telephone: tel, fixe,
               email: get('email').replace(/,/g, '.').replace(/\s+/g, ''), adresse: adr, cp: cpv, ville: vil ? vil.toUpperCase() : ''});
           }
           // Dédoublonnage dans le fichier lui-même puis contre l'annuaire.
@@ -417,11 +423,13 @@ App.annuaire = (() => {
           const badMail = unique.filter(p => !emailOk(p.email)).length;
           const mapped = new Set(Object.keys(map)); if (map.nom_complet !== undefined) mapped.add('prenom').add('nom');
           if (api.$('#impCong', b).value.trim()) mapped.add('assemblee');
-          for (const k of ['cp', 'ville']) if (unique.some(p => p[k])) mapped.add(k);
+          for (const k of ['cp', 'ville', 'telephone', 'fixe']) if (unique.some(p => p[k])) mapped.add(k);
           b._plan = unique.length ? {toAdd, toMerge, existing, unique, mapped} : null;
-          api.$('#impPrev', b).innerHTML = `<div class="notice small">${unique.length} personne(s) lue(s) : <strong>${toAdd.length} nouvelle(s)</strong>, ${toMerge.length} déjà présente(s)${compare ? '' : ' (les champs vides seront complétés)'}${people.length > unique.length ? `, ${people.length - unique.length} doublon(s) dans le fichier fusionné(s)` : ''}${badMail ? `, <span style="color:var(--warn)">${badMail} mail(s) à vérifier</span>` : ''}.</div>
-            <div class="table-wrap" style="margin-top:10px;max-height:220px"><table class="list"><tr><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr>
-            ${unique.slice(0, 8).map(p => `<tr><td>${api.esc(p.nom)}</td><td>${api.esc(p.prenom)}</td><td>${fmtDate(p.naissance)}</td><td>${fmtDate(p.bapteme)}</td><td>${api.esc(p.fonction)}</td><td>${api.esc(p.telephone)}</td><td>${api.esc(p.email)}</td><td>${api.esc(p.adresse)}</td><td>${api.esc(p.cp)}</td><td>${api.esc(p.ville)}</td></tr>`).join('')}</table></div>
+          api.$('#impPrev', b).innerHTML = `<div class="notice small">${unique.length} personne(s) lue(s) : <strong>${toAdd.length} nouvelle(s)</strong>, ${toMerge.length} déjà présente(s)${compare ? '' : ' (les champs vides seront complétés)'}${people.length > unique.length ? `, ${people.length - unique.length} doublon(s) dans le fichier fusionné(s)` : ''}${badMail ? `, <span style="color:var(--warn)">${badMail} mail(s) à vérifier</span>` : ''}.
+              <br>Coordonnées trouvées : <strong>${unique.filter(p => p.email).length}</strong> mail(s) · <strong>${unique.filter(p => p.telephone).length}</strong> portable(s) · <strong>${unique.filter(p => p.fixe).length}</strong> fixe(s) · <strong>${unique.filter(p => p.adresse || p.cp).length}</strong> adresse(s).
+              ${sheets.length > 1 ? `<br><span class="muted">Le résultat ne convient pas ? Essayez une autre ${/\.(pdf|docx|txt)$/i.test(file.name) ? 'méthode de lecture' : 'feuille ou la lecture par blocs'} dans la liste ci-dessus.</span>` : ''}</div>
+            <div class="table-wrap" style="margin-top:10px;max-height:220px"><table class="list"><tr><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Fixe</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr>
+            ${unique.slice(0, 8).map(p => `<tr><td>${api.esc(p.nom)}</td><td>${api.esc(p.prenom)}</td><td>${fmtDate(p.naissance)}</td><td>${fmtDate(p.bapteme)}</td><td>${api.esc(p.fonction)}</td><td style="white-space:nowrap">${api.esc(p.telephone)}</td><td style="white-space:nowrap">${api.esc(p.fixe)}</td><td>${api.esc(p.email)}</td><td>${api.esc(p.adresse)}</td><td>${api.esc(p.cp)}</td><td>${api.esc(p.ville)}</td></tr>`).join('')}</table></div>
             ${unique.length > 8 ? `<p class="small muted">… et ${unique.length - 8} autre(s)</p>` : ''}`;
         }
         sheetSel.addEventListener('change', setSheet); headIn.addEventListener('change', buildMap); api.$('#impCong', b).addEventListener('input', preview);
@@ -437,12 +445,12 @@ App.annuaire = (() => {
   }
 
   /* ---------- Mise à jour par comparaison ---------- */
-  const COMPARED = ['civilite', 'naissance', 'bapteme', 'fonction', 'telephone', 'email', 'adresse', 'cp', 'ville', 'assemblee'];
+  const COMPARED = ['civilite', 'naissance', 'bapteme', 'fonction', 'telephone', 'fixe', 'email', 'adresse', 'cp', 'ville', 'assemblee'];
   const labelOf = k => (FIELDS.find(f => f.key === k) || {label: k}).label;
   const shown = (k, v) => (k === 'naissance' || k === 'bapteme') ? fmtDate(v) : (v || '');
   function same(k, a, b) {
     a = String(a || ''); b = String(b || '');
-    if (k === 'telephone') return a.replace(/\D/g, '').replace(/^33/, '0') === b.replace(/\D/g, '').replace(/^33/, '0');
+    if (k === 'telephone' || k === 'fixe') return a.replace(/\D/g, '').replace(/^33/, '0') === b.replace(/\D/g, '').replace(/^33/, '0');
     if (k === 'email') return a.trim().toLowerCase() === b.trim().toLowerCase();
     return api.norm(a) === api.norm(b);
   }
@@ -516,7 +524,7 @@ App.annuaire = (() => {
 
   /* ---------- Assemblées ---------- */
   // Suppression : l'assemblée seule, les coordonnées de ses membres, ou l'assemblée avec toutes ses fiches.
-  const CONTACT_FIELDS = ['adresse', 'cp', 'ville', 'telephone', 'email'];
+  const CONTACT_FIELDS = ['adresse', 'cp', 'ville', 'telephone', 'fixe', 'email'];
   async function deleteCongregationFlow(c) {
     const members = api.data.persons.filter(p => api.norm(p.assemblee) === api.norm(c.nom));
     const n = members.length;
@@ -567,7 +575,7 @@ App.annuaire = (() => {
     function render() {
       const d = api.data;
       el.innerHTML = `<div class="page-head"><div><h1>Annuaire</h1><p>Chaque personne est enregistrée une seule fois et sert à tous les skills.</p></div>
-        <div class="row"><button class="btn" id="aImp">Importer Excel / CSV / PDF</button><button class="btn" id="aCmp">Mettre à jour depuis un fichier</button><button class="btn" id="aDup">Doublons</button><button class="btn" id="aPho" title="Ajouter des photos en nombre : fichiers nommés « NOM Prénom »">Photos</button>
+        <div class="row"><button class="btn" id="aImp" title="Excel, CSV, PDF, Word ou texte : noms, prénoms, mails, portables, fixes et adresses sont repérés automatiquement">Importer une liste</button><button class="btn" id="aCmp">Mettre à jour depuis un fichier</button><button class="btn" id="aDup">Doublons</button><button class="btn" id="aPho" title="Ajouter des photos en nombre : fichiers nommés « NOM Prénom »">Photos</button>
         <button class="btn primary" id="aAdd">${tab === 'personnes' ? '+ Personne' : '+ Assemblée'}</button></div></div>
         <div class="tabs"><button data-tab="personnes" class="${tab === 'personnes' ? 'active' : ''}">Personnes (${d.persons.length})</button>
         <button data-tab="assemblees" class="${tab === 'assemblees' ? 'active' : ''}">Assemblées (${d.congregations.length})</button></div>
@@ -598,7 +606,7 @@ App.annuaire = (() => {
           const cnt = api.$('#aCount', el); if (cnt) cnt.textContent = `${rows.length} personne(s)`;
           const age = iso => { const n = yearsSince(iso); return iso ? `${fmtDate(iso)}<div class="small muted">${n} an${n > 1 ? 's' : ''}</div>` : ''; };
           api.$('#aRows', el).innerHTML = rows.map(p => `<tr class="click" data-id="${p.id}"><td style="padding:4px 6px">${avatar(p)}</td><td><strong>${api.esc((p.nom || '').toUpperCase())}</strong>${p.assemblee ? `<div class="small muted">${api.esc(p.assemblee)}</div>` : ''}</td>
-            <td>${api.esc(p.prenom)}</td><td>${age(p.naissance)}</td><td>${age(p.bapteme)}</td><td>${p.fonction ? `<span class="pill ${p.fonction === 'Ancien' ? 'ok' : ''}">${api.esc(p.fonction)}</span>` : ''}</td><td style="white-space:nowrap">${api.esc(p.telephone)}</td>
+            <td>${api.esc(p.prenom)}</td><td>${age(p.naissance)}</td><td>${age(p.bapteme)}</td><td>${p.fonction ? `<span class="pill ${p.fonction === 'Ancien' ? 'ok' : ''}">${api.esc(p.fonction)}</span>` : ''}</td><td style="white-space:nowrap">${api.esc(p.telephone)}${p.fixe ? `<div class="small muted">${api.esc(p.fixe)}</div>` : ''}</td>
             <td>${p.email ? `<a href="mailto:${api.esc(p.email)}" onclick="event.stopPropagation()">${api.esc(p.email)}</a>` : ''}${emailOk(p.email) ? '' : ' <span class="pill warn">à vérifier</span>'}</td>
             <td>${api.esc(p.adresse)}</td><td>${api.esc(p.cp)}</td><td>${api.esc(p.ville)}</td></tr>`).join('')
             || `<tr><td colspan="11" class="muted">${d.persons.length ? 'Aucun résultat.' : 'L’annuaire est vide. Ajoutez une personne ou importez un fichier Excel.'}</td></tr>`;

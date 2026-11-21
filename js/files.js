@@ -80,7 +80,8 @@ App.files = (() => {
   /* ---------- CSV ---------- */
   function readCsv(text) {
     const first = text.split(/\r?\n/)[0] || '';
-    const delim = (first.match(/;/g) || []).length >= (first.match(/,/g) || []).length ? ';' : ',';
+    const n = c => (first.match(c) || []).length;
+    const delim = n(/\t/g) > Math.max(n(/;/g), n(/,/g)) ? '\t' : n(/;/g) >= n(/,/g) ? ';' : ',';
     const rows = []; let row = [], cell = '', q = false;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
@@ -102,54 +103,132 @@ App.files = (() => {
     const pdfjs = await import(new URL('lib/pdfjs/pdf.min.mjs', base).href);
     pdfjs.GlobalWorkerOptions.workerSrc = new URL('lib/pdfjs/pdf.worker.min.mjs', base).href;
     const doc = await pdfjs.getDocument({data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false}).promise;
-    const items = await pdfItems(doc);
-    for (const reader of [readFichesS21, readFamilles, readContactsUrgence, readFichesEtiquettes, readFamillesCoteACote, readTableauAncre]) {
-      try { const r = reader(items, file); if (r) return r; } catch (e) { console.warn('Lecture PDF', reader.name, e); }
+    const pages = await pdfItems(doc);
+    if (!pages.some(p => p.length)) throw new Error('Ce PDF ne contient pas de texte lisible (document scanné ?). Seuls les PDF créés depuis un logiciel (Word, Excel…) peuvent être lus pour l’instant.');
+    return readItems(pages, file, `PDF, ${doc.numPages} page${doc.numPages > 1 ? 's' : ''}`);
+  }
+
+  /* Toutes les méthodes de lecture sont essayées ; la plus complète est proposée en premier, les autres restent au choix
+     dans la liste « Feuille / lecture », avec en dernier le tableau brut dont on choisit soi-même les colonnes. */
+  const READERS = () => [[readFichesS21, 1], [readFamilles, 1], [readContactsUrgence, 1], [readFichesEtiquettes, 1], [readFamillesCoteACote, 1], [readTableauAncre, 1], [readBlocs, 0]];
+  function scoreSheet(sh) {
+    const h = sh.rows[0].map(String), iN = h.indexOf('Nom'), iP = h.indexOf('Prénom');
+    const extra = ['Adresse', 'Code postal', 'Portable', 'Fixe', 'Mail', 'Date de naissance', 'Date de baptême', 'Fonction', 'Civilité'].map(k => h.indexOf(k)).filter(i => i >= 0);
+    let sc = 0;
+    for (const r of sh.rows.slice(1)) if (r[iN] && r[iP]) sc += 1 + 0.25 * extra.filter(i => String(r[i] ?? '').trim()).length;
+    return sc;
+  }
+  function readItems(pages, file, what) {
+    const base = file.name.replace(/\.[^.]+$/, ''), found = [];
+    for (const [reader, special] of READERS()) {
+      try { const r = reader(pages, file); if (r && r[0].rows.length > 1) found.push({sheet: r[0], score: scoreSheet(r[0]) * (special ? 1.15 : 1)}); } catch (e) { console.warn('Lecture', reader.name, e); }
     }
+    found.sort((a, b) => b.score - a.score);
+    const out = found.map(f => f.sheet);
+    const raw = rawTable(pages); if (raw.rows.length) out.push({name: `${base} — tableau brut (${what}), colonnes à choisir`, rows: raw.rows});
+    if (!out.length) throw new Error('Aucun texte lisible dans ce fichier.');
+    return out;
+  }
+  // Tableau « brut » : lignes de texte découpées en colonnes d'après la position des mots.
+  function rawTable(pages) {
     const lines = [];
-    for (let n = 1; n <= doc.numPages; n++) {
-      const page = await doc.getPage(n);
-      const content = await page.getTextContent();
-      const items = content.items.filter(i => i.str && i.str.trim()).map(i => ({x: i.transform[4], y: i.transform[5], w: i.width, h: Math.abs(i.transform[3]) || 10, str: i.str}));
-      items.sort((a, b) => b.y - a.y || a.x - b.x);
+    for (const items of pages) {
       const pageLines = [];
-      for (const it of items) {
-        const l = pageLines.find(l => Math.abs(l.y - it.y) <= Math.max(2, it.h * 0.35));
-        l ? l.items.push(it) : pageLines.push({y: it.y, items: [it]});
-      }
+      for (const it of [...items].sort((a, b) => b.y - a.y || a.x - b.x)) { const l = pageLines.find(l => Math.abs(l.y - it.y) <= Math.max(2, it.h * 0.35)); l ? l.items.push(it) : pageLines.push({y: it.y, items: [it]}); }
       pageLines.sort((a, b) => b.y - a.y);
       for (const l of pageLines) {
         l.items.sort((a, b) => a.x - b.x);
         const cells = [];
-        for (const it of l.items) {
-          const c = cells.at(-1);
-          const gap = c ? it.x - c.end : Infinity;
-          if (c && gap < it.h * 0.7) { c.text += (gap > it.h * 0.12 ? ' ' : '') + it.str; c.end = it.x + it.w; }
-          else cells.push({x: it.x, end: it.x + it.w, text: it.str});
-        }
-        lines.push({page: n, cells});
+        for (const it of l.items) { const c = cells.at(-1), gap = c ? it.x - c.end : Infinity; if (c && gap < it.h * 0.7) { c.text += (gap > it.h * 0.12 ? ' ' : '') + it.str; c.end = it.x + it.w; } else cells.push({x: it.x, end: it.x + it.w, text: it.str}); }
+        lines.push({cells});
       }
-      page.cleanup();
     }
-    if (!lines.length) throw new Error('Ce PDF ne contient pas de texte lisible (document scanné ?). Seuls les PDF créés depuis un logiciel (Word, Excel…) peuvent être lus pour l’instant.');
-    // Colonnes : regroupement des débuts de cellules proches.
-    const xs = lines.flatMap(l => l.cells.map(c => c.x)).sort((a, b) => a - b);
-    const cols = [];
+    const xs = lines.flatMap(l => l.cells.map(c => c.x)).sort((a, b) => a - b), cols = [];
     for (const x of xs) { const c = cols.at(-1); if (c && x - c.last <= 12) { c.last = x; c.n++; } else cols.push({start: x, last: x, n: 1}); }
     const starts = cols.map(c => c.start);
-    const rows = lines.map(l => {
-      const r = new Array(starts.length).fill('');
-      for (const c of l.cells) {
-        let idx = 0; for (let i = 0; i < starts.length; i++) if (starts[i] <= c.x + 1) idx = i;
-        r[idx] = r[idx] ? r[idx] + ' ' + c.text : c.text;
-      }
-      return r.map(s => s.replace(/\s+/g, ' ').trim());
-    });
-    // Retire les colonnes toujours vides.
+    const rows = lines.map(l => { const r = new Array(starts.length).fill(''); for (const c of l.cells) { let idx = 0; for (let i = 0; i < starts.length; i++) if (starts[i] <= c.x + 1) idx = i; r[idx] = r[idx] ? r[idx] + ' ' + c.text : c.text; } return r.map(s => s.replace(/\s+/g, ' ').trim()); });
     const keep = starts.map((_, i) => rows.some(r => r[i]));
-    return [{name: file.name.replace(/\.pdf$/i, '') + ` (PDF, ${doc.numPages} page${doc.numPages > 1 ? 's' : ''})`, rows: rows.map(r => r.filter((_, i) => keep[i]))}];
+    return {rows: rows.map(r => r.filter((_, i) => keep[i]))};
   }
 
+  /* Lecture universelle « par blocs », pour les listes d'un format inconnu (PDF, Word, texte).
+     Une personne commence par une ligne « NOM Prénom » (ou « Prénom NOM », « NOM, Prénom ») ; ce qui suit — sur la même
+     ligne ou en dessous — est rangé d'après sa forme : mail, portable (06/07), fixe, adresse et code postal.
+     Les colonnes dont le titre parle d'urgence, de famille ou de contacts sont ignorées. */
+  const STREET = /\b(rue|route|chemin|impasse|avenue|av|allee|allée|place|residence|résidence|boulevard|bd|lotissement|hameau|lieu[- ]dit|quai|cours|square|cite|cité|clos|domaine|village|bat|bât|batiment|bâtiment|appt|apt|appartement|escalier|bis|zac|cedex)\b/i;
+  const NAMEWORD = /^[A-ZÀ-Ý][a-zà-ÿ'’]+(?:-[A-ZÀ-Ý]?[a-zà-ÿ'’]+)*$/;
+  function nameIn(t) {
+    t = String(t || '').replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!t || /\d|@|:|\(|\//.test(t) || t.length > 48 || STREET.test(t)) return null;
+    const toks = t.split(' '); if (toks.length < 2 || toks.length > 6) return null;
+    const isUp = x => x.length > 1 && x === x.toUpperCase() && /[A-ZÀ-Ý]/.test(x) && /^[A-ZÀ-Ý'’\-]+$/.test(x);
+    const up = toks.filter(isUp), low = toks.filter(x => NAMEWORD.test(x));
+    if (!up.length || !low.length || up.length + low.length !== toks.length) return null;
+    // NOM d'un côté, prénoms de l'autre (pas « Jean DUPONT Marie »)
+    const firstUp = isUp(toks[0]), cut = toks.findIndex(x => isUp(x) !== firstUp);
+    if (toks.slice(cut).some(x => isUp(x) === firstUp)) return null;
+    return {nom: up.join(' '), prenom: low.join(' ')};
+  }
+  function readBlocs(pages, file) {
+    const MAIL = /[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+/g;
+    const people = [];
+    // Titres « Famille », « Urgence »… : tout ce qui est à leur droite est ignoré, sur toutes les pages
+    const CUT = /^(famille|urgence|contacts?( en cas)? d.urgence|en cas d.urgence|personnes? (à|a) (pr[ée]venir|contacter)|contact urgence|parents?)$/i;
+    const cuts = pages.flat().filter(i => CUT.test(i.str.trim())).map(i => i.x);
+    const cutX = cuts.length ? Math.min(...cuts) - 4 : Infinity;
+    let carry = null;
+    for (const raw of pages) {
+      const items = raw.filter(i => i.x < cutX); if (!items.length) continue;
+      // Colonnes : bandes verticales séparées par un espace vide d'au moins 14 points sur presque toute la page
+      const maxX = Math.ceil(Math.max(...items.map(i => i.x + i.w))) + 2, cover = new Uint16Array(maxX + 1);
+      for (const it of items) if (it.w < maxX * 0.6) for (let x = Math.max(0, Math.floor(it.x)); x <= Math.min(maxX, Math.ceil(it.x + it.w)); x++) cover[x]++;
+      const bands = []; let start = null, empty = 0;
+      for (let x = 0; x <= maxX; x++) {
+        if (cover[x] > items.length * 0.004) { if (start === null) start = x; else if (empty >= 14) { bands.push([start, x - empty]); start = x; } empty = 0; }
+        else if (start !== null) empty++;
+      }
+      if (start !== null) bands.push([start, maxX]);
+      const bandOf = it => { const c = it.x + Math.min(it.w, 20) / 2; let k = 0; bands.forEach((b, i) => { if (c >= b[0] - 2) k = i; }); return k; };
+      const lines = toLines(items); for (const l of lines) l.items = glue(l.items);
+      // Rôle de chaque bande : noms, données, ou à ignorer (titre « Urgence », « Famille »…)
+      const nameCount = bands.map(() => 0), skip = bands.map(() => false), seenName = bands.map(() => false);
+      for (const l of lines) {
+        const byB = {}; for (const it of l.items) (byB[bandOf(it)] ??= []).push(it.str);
+        for (const [b, strs] of Object.entries(byB)) { const t = strs.join(' '); if (nameIn(t)) { nameCount[b]++; seenName[b] = true; } else if (!seenName[b] && CUT.test(t.trim())) skip[b] = true; }
+      }
+      // une bande « famille » ou « urgence » liste aussi des noms : elle reste ignorée, comme celles qui la suivent jusqu'à la prochaine bande de proclamateurs
+      const nameBands = bands.map((_, i) => i).filter(i => nameCount[i] >= 3 && !skip[i]);
+      if (!nameBands.length) continue;
+      const owner = bands.map((_, i) => { if (nameBands.includes(i)) return i; let o = -1; for (const n of nameBands) if (n < i) o = n; if (o < 0) return -1; for (let k = o + 1; k <= i; k++) if (skip[k]) return -1; return o; });
+      for (const nb of nameBands) {
+        let cur = nb === nameBands[0] ? carry : null;   // fiche commencée en bas de la page précédente
+        for (const l of lines) {
+          if (/^(proclamateurs?|nom\b|imprim[ée]|page \d|liste des|responsable de)/i.test(l.text) || /^\d+\s*\/\s*\d+$/.test(l.text)) continue;
+          const mine = l.items.filter(it => owner[bandOf(it)] === nb); if (!mine.length) continue;
+          const nameTxt = mine.filter(it => bandOf(it) === nb).map(i => i.str).join(' '), nm = nameIn(nameTxt);
+          if (nm) { cur = {...nm, addr: [], tel: '', fixe: '', mail: '', stop: false}; people.push(cur); }
+          if (!cur) continue;
+          const parts = nm ? mine.filter(it => bandOf(it) !== nb) : mine;
+          const txt = parts.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim(); if (!txt) continue;
+          const mails = txt.match(MAIL) || [], t = telsIn(txt);
+          if (mails.length && !cur.mail) cur.mail = mails[0];
+          if (t.mob[0] && !cur.tel) cur.tel = t.mob[0];
+          if (t.fixe[0] && !cur.fixe) cur.fixe = t.fixe[0];
+          if (mails.length || t.mob.length || t.fixe.length) { cur.stop = !nm; }
+          // reste du texte : adresse (avant les téléphones et mails), sans dates, étiquettes ni fonctions
+          const rest = sansCodes(txt.replace(MAIL, ' ').replace(TEL_RE, ' ').replace(DATE_RE, ' ').replace(/\((m|f|e|t)\)|\b(t[ée]l[ée]?phone|portable|mobile|fixe|domicile|mail|e-mail|courriel|adresse|ancien|assistant|pionnier\w*|proclamateur|fr[èe]re|s[œo]eur|homme|femme)\b\s*:?/gi, ' ')).replace(/\s+/g, ' ').trim();
+          if (rest && !cur.stop && /[A-Za-zÀ-ÿ]{2,}|\d{5}/.test(rest) && cur.addr.length < 4) cur.addr.push(rest);
+          if (mails.length || t.mob.length || t.fixe.length) cur.stop = true;
+        }
+        carry = cur;
+      }
+    }
+    const good = people.filter(p => p.tel || p.fixe || p.mail || p.addr.length);
+    if (good.length < 3 || good.length < people.length * 0.4) return null;
+    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Fixe', 'Mail']];
+    for (const p of people) { const a = splitAdresse(p.addr); rows.push([p.nom, p.prenom, a.adresse, a.cp, a.ville, p.tel, p.fixe, p.mail]); }
+    return [{name: `${file.name.replace(/\.(pdf|docx|txt|xlsx|xlsm|csv|tsv)$/i, '')} — lecture automatique par blocs (${people.length} personnes)`, rows}];
+  }
 
   /* ---------- Outils communs aux listes PDF ---------- */
   // Tous les morceaux de texte de chaque page, avec position et caractère gras.
@@ -173,16 +252,35 @@ App.files = (() => {
     for (const l of lines) { l.items.sort((a, b) => a.x - b.x); l.text = l.items.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim(); }
     return lines;
   }
-  const fmtTel = t => { const d = String(t || '').replace(/\D/g, '').replace(/^33(?=[1-9])/, '0'); return d.length === 10 ? d.replace(/(\d{2})(?=\d)/g, '$1 ') : String(t || '').trim(); };
+  // Recolle les morceaux d'un même mot coupés par le crénage (« j » + « ean.dupont@… »)
+  const glue = items => { const out = []; for (const it of [...items].sort((a, b) => a.x - b.x)) { const o = out.at(-1); if (o && it.x >= o.x && it.x - (o.x + o.w) < 1.2 && !/\s$/.test(o.str) && !/^\s/.test(it.str)) { o.str += it.str; o.w = it.x + it.w - o.x; } else out.push({...it}); } return out; };
+  const fmtTel = t => { let d = String(t || '').replace(/\D/g, '').replace(/^00/, ''); if (/^33/.test(d) && d.length >= 11) d = d.replace(/^33(0?)/, '0'); return d.length === 10 ? d.replace(/(\d{2})(?=\d)/g, '$1 ') : String(t || '').trim(); };
+  // Tous les numéros d'un texte, rangés en portables (06, 07) et fixes. Accepte « (m) », points, tirets, « +33 ».
+  const TEL_RE = /(?:\+|00)\s?33\s?(?:\(0\)\s?)?[1-9](?:[ .\-\/]?\d{2}){4}|(?<![\d.])0[1-9](?:[ .\-\/]?\d{2}){4}(?![\d])/g;
+  function telsIn(t) {
+    const out = {mob: [], fixe: []};
+    for (const m of String(t || '').matchAll(TEL_RE)) { const n = fmtTel(m[0].replace(/\(0\)/, '')), list = /^0[67]/.test(n) ? out.mob : out.fixe; if (!list.includes(n)) list.push(n); }
+    // Numéros étrangers (+52…, +596…, 0048…) : rangés avec les portables, tels quels
+    for (const m of String(t || '').replace(TEL_RE, ' ').matchAll(/(?:\+|\b00)(?!33)[1-9]\d{0,3}(?:[ .\-]?\d){7,12}\b/g)) { const n = '+' + m[0].replace(/\D/g, '').replace(/^00/, ''); if (!out.mob.includes(n)) out.mob.push(n); }
+    return out;
+  }
+  // Codes wifi, digicodes, mots de passe : jamais dans l'annuaire (ils vont dans le Coffre).
+  const sansCodes = t => String(t || '').replace(/(connexion\s+zoom\s*)?\b(code\s*)?(wi-?fi|digicode|mot de passe|password|mdp)\b\s*:?\s*(?=\S*\d)\S*|(connexion\s+zoom\s*)?\b(code\s*)?(wi-?fi|digicode|mot de passe|password|mdp)\b\s*:?/gi, ' ').replace(/\s+/g, ' ').trim();
   function splitAdresse(a) {
-    a = String(a || '').replace(/\s+/g, ' ').replace(/(\w)- (\w)/g, '$1-$2').trim();
+    // Lignes séparées : « Ville 50250 » en dernière ligne (code postal après la ville)
+    if (Array.isArray(a)) {
+      const ls = a.map(x => sansCodes(String(x || '').replace(/\s+/g, ' ').trim())).filter(Boolean), last = ls.at(-1) || '';
+      const m = ls.length > 1 && /^([^\d]+?)[,\s]+(\d{2}) ?(\d{3})$/.exec(last);
+      if (m && !/\b\d{2} ?\d{3}\b/.test(ls.slice(0, -1).join(' '))) return {adresse: ls.slice(0, -1).join(' ').replace(/(\w)- (\w)/g, '$1-$2').replace(/[,\s-]+$/, ''), cp: m[2] + m[3], ville: m[1].trim().toUpperCase()};
+      a = ls.join(' ');
+    }
+    a = sansCodes(String(a || '').replace(/\s+/g, ' ').replace(/(\w)- (\w)/g, '$1-$2').trim()).replace(/\b\d[\dO]{4}\b/g, m => m.replace(/O/g, '0'));
     // code postal répété (« 50600 "la Ruptière" 50600 Les Loges ») : on garde le dernier, on retire le premier de la rue
     const all = [...a.matchAll(/\b(\d{2}) ?(\d{3})\b/g)];
     if (all.length > 1 && all.every(x => x[1] + x[2] === all[0][1] + all[0][2])) a = a.slice(0, all[0].index) + a.slice(all[0].index + all[0][0].length);
     const m = a.trim().match(/^(.*?)[,\s-]*\b(\d{2}) ?(\d{3})\b\s*(.*)$/);
     if (!m) return {adresse: a.trim(), cp: '', ville: ''};
     let street = m[1].replace(/[,\s-]+$/, ''), ville = m[4].replace(/\bcedex\b.*$/i, '').replace(/^[,\s-]+/, '').trim();
-    if (!street && ville) { street = ''; }
     return {adresse: street, cp: m[2] + m[3], ville: ville.toUpperCase()};
   }
   // « Prénom NOM » ou « NOM Prénom » : le nom est en majuscules ; sinon on s'aide du nom de famille connu.
@@ -242,15 +340,15 @@ App.files = (() => {
         if (!/\s/.test(c3) && /^[a-z0-9._-]+$/.test(c3) && /\./.test(c3) && fam.cur && fam.cur.mail && !/\.[a-z]{2,4}$/.test(fam.cur.mail)) { fam.cur.mail += c3; continue; }
         if (!/\s/.test(c3) && /^[a-z0-9._-]+$/.test(c3) && fam.cur) { if (fam.cur.mail) fam.cur.mail += c3; continue; }
         if (/@/.test(c3)) { if (fam.cur && !fam.cur.mail) fam.cur.mail = (c3.replace(/\s+/g, '').match(/[^\s()]+@[^\s()]+/) || [''])[0]; continue; }
-        if (/\((m|f|t)\)/.test(c3) || /^[\d .+()-]{8,}$/.test(c3)) { if (fam.cur) { const m = c3.match(/\(m\)\s*([\d .+]{8,})/), f = c3.match(/\((f|t)\)\s*([\d .+]{8,})/); if (m && !fam.cur.tel) fam.cur.tel = fmtTel(m[1]); else if (f && !fam.cur.tel) fam.cur.tel = fmtTel(f[2]); } continue; }
-        fam.cur = {full: c3, fam, tel: '', mail: ''}; people.push(fam.cur);
+        if (/\((m|f|t)\)/.test(c3) || /^[\d .+()-]{8,}$/.test(c3)) { if (fam.cur) { const t = telsIn(c3); if (!fam.cur.tel) fam.cur.tel = t.mob[0] || ''; if (!fam.cur.fixe) fam.cur.fixe = t.fixe[0] || ''; } continue; }
+        fam.cur = {full: c3, fam, tel: '', fixe: '', mail: ''}; people.push(fam.cur);
       }
     }
     if (!people.length) return null;
-    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Mail', 'Assemblée']];
+    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Fixe', 'Mail', 'Assemblée']];
     for (const p of people) {
-      const {nom, prenom} = splitNom(p.full, p.fam.nom), a = splitAdresse(p.fam.addr.join(' '));
-      rows.push([nom, prenom, a.adresse, a.cp, a.ville, p.tel, p.mail, asm]);
+      const {nom, prenom} = splitNom(p.full, p.fam.nom), a = splitAdresse(p.fam.addr);
+      rows.push([nom, prenom, a.adresse, a.cp, a.ville, p.tel, p.fixe, p.mail, asm]);
     }
     return [{name: `${file.name.replace(/\.pdf$/i, '')} — liste par familles (${people.length} personnes)`, rows}];
   }
@@ -258,7 +356,6 @@ App.files = (() => {
 
   const DATE_RE = /(\d{1,2})[\/.\- ](\d{1,2})[\/.\- ](\d{4})/g;
   const datesIn = t => [...String(t || '').matchAll(DATE_RE)].map(m => `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/${m[3]}`);
-  const pickTel = t => { const nums = (String(t || '').match(/(\+33\s?|0)[1-9](?:[ .\-]?\d{2}){4}/g) || []).map(fmtTel); return nums.find(n => /^0[67]/.test(n)) || nums[0] || ''; };
   const pickMail = t => (String(t || '').replace(/\s+(?=\S*@)|(?<=@\S*)\s+(?=[\w.-]+\.\w{2,}\b)/g, '').match(/[\w.+\-]+@[\w\-]+(\.[\w\-]+)+/) || [''])[0];
 
   /* Fiches à étiquettes (Villedieu) : « Nom, Prénom » puis « ADRESSE: … », « EMAIL: … », « TÉLÉPHONE MOBILE: … ». */
@@ -270,16 +367,16 @@ App.files = (() => {
       const mA = /ADRESSE\s*:\s*(.*?)(\s+GROUPE\s*:.*)?$/i.exec(t), mE = /E-?MAIL\s*:\s*(\S+)/i.exec(t), mT = /T[ÉE]L[ÉE]PHONE\s+(MOBILE|FIXE|PORTABLE)?\s*:\s*(.+)$/i.exec(t);
       if (mA && cur) { cur.adr = mA[1]; continue; }
       if (mE && cur) { if (!cur.mail) cur.mail = mE[1]; continue; }
-      if (mT && cur) { const n = fmtTel(mT[2]); if (!cur.tel || (/MOBILE|PORTABLE/i.test(mT[1] || '') && !/^0[67]/.test(cur.tel))) cur.tel = n; continue; }
+      if (mT && cur) { const t = telsIn(mT[2]); if (!cur.tel && t.mob[0]) cur.tel = t.mob[0]; if (!cur.fixe && t.fixe[0]) cur.fixe = t.fixe[0]; continue; }
       const mN = /^([^:,]{2,40}),\s*([^:]{1,40})$/.exec(t);
-      if (mN && !/@|\d/.test(t)) { cur = {nom: mN[1].trim().toUpperCase(), prenom: mN[2].trim(), adr: '', mail: '', tel: ''}; people.push(cur); }
+      if (mN && !/@|\d/.test(t)) { cur = {nom: mN[1].trim().toUpperCase(), prenom: mN[2].trim(), adr: '', mail: '', tel: '', fixe: ''}; people.push(cur); }
     }
     if (!people.length) return null;
     const asm = pdfTitle(pages, 0).replace(/\s*LISTE DE CONTACTS.*$/i, '');
-    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Mail', 'Assemblée']];
+    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Fixe', 'Mail', 'Assemblée']];
     for (const p of people) { const parts = p.adr.split(',').map(x => x.trim()), ci = parts.findIndex(x => /^\d{5}$/.test(x));
       const a = ci >= 0 ? {adresse: parts.slice(0, ci).join(', '), cp: parts[ci], ville: parts.slice(ci + 1).join(', ').toUpperCase()} : splitAdresse(p.adr);
-      rows.push([p.nom, p.prenom, a.adresse, a.cp, a.ville, p.tel, p.mail, asm]); }
+      rows.push([p.nom, p.prenom, a.adresse, a.cp, a.ville, p.tel, p.fixe, p.mail, asm]); }
     return [{name: `${file.name.replace(/\.pdf$/i, '')} — fiches (${people.length} personnes)`, rows}];
   }
 
@@ -292,23 +389,41 @@ App.files = (() => {
     if (blocks.length !== 2 || blocks[1] - blocks[0] < 300) return null;
     // un tableau avec une ligne de titres relève d'un autre lecteur
     const nrm = t => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.:]/g, ' ').trim();
-    if (toLines(pages[0]).slice(0, 25).some(l => l.items.filter(it => COLKEYS.some(([, re]) => re.test(nrm(it.str)))).length >= 3)) return null;
-    const people = [];
+    if (toLines(pages[0]).slice(0, 25).some(l => !/@|\d/.test(l.text) && l.items.filter(it => COLKEYS.some(([, re]) => re.test(nrm(it.str)))).length >= 3)) return null;
+    const people = [], MAIL = /[\w.+\-]+@[\w\-]+(\.[\w\-]+)+/g;
     blocks.forEach((b0, bi) => {
       const hi = bi === 0 ? blocks[1] - 5 : 1e9, c2a = b0 + 112, c2b = b0 + 178;
       for (const p of pages) {
         let fam = null;
         for (const l of toLines(p.filter(i => i.x >= b0 - 5 && i.x < hi))) {
           if (/^page \d/i.test(l.text)) continue;
-          const c1 = l.items.filter(i => i.x < c2a).map(i => i.str).join(' ').trim(), c2 = l.items.filter(i => i.x >= c2a && i.x < c2b).map(i => i.str).join(' ').trim();
-          if (c1 && isFam(c1)) { fam = {nom: c1.replace(/\s*\(.*\)/, '').trim(), addr: [], prenoms: []}; people.push(fam); }
+          l.items = glue(l.items);
+          let c1 = l.items.filter(i => i.x < c2a).map(i => i.str).join(' ').trim();
+          const inB = l.items.filter(i => i.x >= c2a && i.x < c2b), rest = l.items.filter(i => i.x >= c2b);
+          let c2 = inB.filter(i => !/@|\d/.test(i.str)).map(i => i.str).join(' ').trim();
+          let c3 = [...inB.filter(i => /@|\d/.test(i.str)), ...rest].map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
+          if (/^Pas( de mail)?/i.test(c2)) { c3 = c2 + ' ' + c3; c2 = ''; }
+          if (c2.endsWith(',')) { const extra = []; for (const w of rest) { if (/^[A-ZÀ-Ý][a-zà-ÿ'\-]+,?$/.test(w.str.trim())) extra.push(w.str.trim()); else break; } c2 += ' ' + extra.join(' '); }
+          // « DUPONT Résidence Les Pins » : nom de famille suivi d'un début d'adresse sur la même ligne
+          const lead = !isFam(c1) && c2 && /^([A-ZÀ-Ý][A-ZÀ-Ý'’\-]{2,}(?: [A-ZÀ-Ý][A-ZÀ-Ý'’\-]+)*)\s+([A-ZÀ-Ý][a-zà-ÿ].*)$/.exec(c1);
+          if (lead && fam && !fam.stop) { fam = {nom: lead[1], addr: [lead[2]], persons: [], fixes: []}; people.push(fam); c1 = ''; }
+          if (c1 && isFam(c1)) { fam = {nom: c1.replace(/\s*\(.*\)/, '').trim(), addr: [], persons: [], fixes: []}; people.push(fam); }
           else if (fam && c1) { if (/Salle du Royaume/i.test(c1)) fam.stop = true; if (!fam.stop && !/^Fixe/i.test(c1)) fam.addr.push(c1.replace(/\s*Fixe\d?$/i, '')); }
-          if (fam && c2 && !fam.stop) { const clean = c2.split(' ').filter(t => !/@|\d/.test(t)).join(' '); fam.prenoms.push(...clean.split(/[,/]/).map(x => x.trim()).filter(x => x && !x.startsWith('(') && x.toLowerCase() !== 'prénom')); }
+          if (!fam || fam.stop) continue;
+          if (/ne pas utiliser/i.test(c3)) fam.skipMail = true;
+          const mails = fam.skipMail ? [] : [...sansCodes(c3).matchAll(MAIL)].map(m => m[0]), t = telsIn(sansCodes(c3));
+          fam.fixes.push(...t.fixe);
+          let names = c2.split(/[,/]/).map(x => x.trim()).filter(x => x && !x.startsWith('(') && x.toLowerCase() !== 'prénom');
+          const last = fam.persons.at(-1);
+          if (names.length && last && last.prenom.endsWith('-')) { last.prenom += names.shift(); }
+          const added = names.map(n => ({prenom: n, tel: '', mail: ''})); fam.persons.push(...added);
+          const tgt = added[0] || fam.persons.at(-1);
+          if (tgt) { if (!tgt.tel && t.mob[0]) tgt.tel = t.mob[0]; if (!tgt.mail && mails[0]) tgt.mail = mails[0]; }
         }
       }
     });
-    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville']];
-    for (const f of people) { const a = splitAdresse(f.addr.join(' ')); for (const pn of f.prenoms) rows.push([f.nom, pn, a.adresse, a.cp, a.ville]); }
+    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Fixe', 'Mail']];
+    for (const f of people) { const a = splitAdresse(f.addr), fx = [...new Set(f.fixes)].join(' / '); for (const pn of f.persons) rows.push([f.nom, pn.prenom, a.adresse, a.cp, a.ville, pn.tel, fx, pn.mail]); }
     return rows.length > 1 ? [{name: `${file.name.replace(/\.pdf$/i, '')} — familles (${rows.length - 1} personnes)`, rows}] : null;
   }
 
@@ -316,7 +431,7 @@ App.files = (() => {
      colonnes lues sur la ligne de titres ; chaque ligne de texte est rattachée au nom le plus proche. */
   const COLKEYS = [['urgence', /urgen|contacter|appel|personne a|contact|survi|dpa|sac de/], ['mail', /mail|@|courriel/], ['naissance', /naiss/], ['bapteme', /bapt/],
     ['prenom', /^pr[eé]nom/], ['nomcomplet', /nom (et|&) pr[eé]nom|proclamateur/], ['nom', /^nom\b/], ['titre', /^titre$|civilit/], ['cp', /postal|^cp$/], ['ville', /^ville|commune/],
-    ['tel', /t[eé]l|portable|mobile|phone/], ['adresse', /adresse/], ['fonction', /fonction|privil/], ['groupe', /groupe|pr[eé]dication/]];
+    ['fixe', /domicil|fixe/], ['tel', /t[eé]l|portable|mobile|phone|gsm/], ['adresse', /adresse|^rue\b|^voie\b/], ['fonction', /fonction|privil/], ['groupe', /groupe|pr[eé]dication/]];
   function readTableauAncre(pages, file) {
     const norm = t => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[.:]/g, ' ').replace(/\s+/g, ' ').trim();
     const firstLines = toLines(pages[0]).slice(0, 25);
@@ -330,7 +445,7 @@ App.files = (() => {
     clusters.sort((a, b) => a.x - b.x);
     let afterUrg = false;
     const cols = clusters.map(c => { const label = norm(c.words.sort((a, b) => b.y - a.y || a.x - b.x).map(w => w.str).join(' ')); let key = (COLKEYS.find(([, re]) => re.test(label)) || [])[0] || 'autre';
-      if (key === 'urgence') afterUrg = true; else if (afterUrg && key !== 'mail') key = 'urgence'; return {x: c.x, mid: (c.x + c.end) / 2, key, label}; });
+      if (key === 'urgence') afterUrg = true; else if (afterUrg && key !== 'mail') key = 'urgence'; return {x: c.x, mid: (c.x + c.end) / 2, hx: c.x, hend: c.end, key, label}; });
     const nameKeys = ['nomcomplet', 'nom'], nameCol = cols.find(c => nameKeys.includes(c.key)) || cols[0];
     if (!cols.some(c => ['adresse', 'tel', 'mail', 'naissance', 'cp', 'ville'].includes(c.key))) return null;
     const hdrY = Math.min(...hItems.map(i => i.y)), headWords = new Set(hItems.map(i => i.str.trim()));
@@ -351,42 +466,58 @@ App.files = (() => {
     }
     const colOf = x => { let k = 0; for (let i = 0; i < cols.length; i++) if (cols[i].x <= x + 4) k = i; return k; };
     const titleCol = cols.findIndex(c => c.key === 'titre'), nIdx = cols.indexOf(nameCol);
-    const rows = [];
+    // Un mail est rattaché à la colonne « Mail » dont le titre le surplombe (titre centré au-dessus d'une colonne large)
+    const keyOf = it => { if (/@/.test(it.str)) { const ov = c => Math.min(it.x + it.w, c.hend) - Math.max(it.x, c.hx); if (cols.some(c => c.key === 'mail' && ov(c) > 0)) return 'mail'; } return cols[colOf(it.x)].key; };
+    const rows = [], allAnchors = [];
+    let prev = null;   // dernière page lue avec des noms (pour les pages « suite » d'un tableau trop large, imprimé en plusieurs tranches)
     for (const p of pages) {
       const lines = toLines(p).filter(l => !(p === pages[0] && l.y >= hdrY - 1) && !l.items.every(i => headWords.has(i.str.trim())) && !/catastrophe|Salle du|Royaume|^page \d/i.test(l.text));
       const anchors = [];
       for (const l of lines) {
-        const nameTxt = l.items.filter(i => colOf(i.x) === nIdx || (nIdx === 0 && colOf(i.x) === 0) || (cols[colOf(i.x)].key === 'prenom' && false)).map(i => i.str).join(' ').replace(/^\d+\s+/, '').trim();
+        const nameTxt = l.items.filter(i => colOf(i.x) === nIdx || (nIdx === 0 && colOf(i.x) === 0)).map(i => i.str).join(' ').replace(/^\d+\s+/, '').trim();
         const hasTitle = titleCol >= 0 && l.items.some(i => colOf(i.x) === titleCol && /^(M|Mme|Mlle|Melle|M\.)\.?$/.test(i.str.trim()));
         const ok = titleCol >= 0 ? hasTitle : /^[A-ZÀ-Ý][\p{L}'’\-]+/u.test(nameTxt) && /[A-ZÀ-Ý]{2,}|^[A-ZÀ-Ý][a-zà-ÿ]+ [A-ZÀ-Ý]/.test(nameTxt) && !/\d|@/.test(nameTxt);
         if (ok) anchors.push({y: l.y, cells: {}});
       }
-      if (!anchors.length) continue;
+      if (!anchors.length) {
+        // Page « suite » : mêmes lignes que la page de noms précédente, autres colonnes (mails, téléphones). On rattache par la hauteur.
+        if (prev && !prev.used && lines.some(l => /@|\d{2}[ .\-]?\d{2}[ .\-]?\d{2}[ .\-]?\d{2}/.test(l.text))) {
+          prev.used = true;
+          for (const l of lines) {
+            const a = prev.anchors.reduce((b, x) => Math.abs(x.y - l.y) < Math.abs(b.y - l.y) ? x : b);
+            if (Math.abs(a.y - l.y) > prev.maxd) continue;
+            for (const it of l.items) { const k = /@/.test(it.str) ? 'mail' : TEL_RE.test(it.str) || /^\d{2}([ .\-]\d{2})+$/.test(it.str.trim()) ? 'tel' : null; TEL_RE.lastIndex = 0; if (k) (a.cells[k] ??= []).push({y: it.y, x: it.x, s: it.str}); }
+          }
+        }
+        continue;
+      }
       const gaps = anchors.slice(1).map((a, i) => anchors[i].y - a.y).sort((a, b) => a - b), maxd = Math.max(4, (gaps[Math.floor(gaps.length / 2)] || 30) * 0.62);
       // Prénom écrit sous le nom (lignes de suite dans la colonne des noms) : chaque ligne appartient au nom au-dessus d'elle
       const below = lines.filter(l => !anchors.some(a => a.y === l.y) && l.items.some(i => colOf(i.x) === nIdx && /^[A-ZÀ-Ý][a-zà-ÿ]/.test(i.str.trim()))).length >= anchors.length * 0.3;
       for (const l of lines) {
         const a = below ? anchors.filter(x => x.y >= l.y - 4).sort((p, q) => p.y - q.y)[0] : anchors.reduce((b, x) => Math.abs(x.y - l.y) < Math.abs(b.y - l.y) ? x : b);
         if (!a || (!below && Math.abs(a.y - l.y) > maxd) || (below && a.y - l.y > Math.max(maxd * 2.5, 30))) continue;
-        for (const it of l.items) { const k = cols[colOf(it.x)].key; if (k === 'urgence' || k === 'autre') continue; (a.cells[k] ??= []).push({y: it.y, x: it.x, s: it.str}); }
+        for (const it of l.items) { const k = keyOf(it); if (k === 'urgence' || k === 'autre') continue; (a.cells[k] ??= []).push({y: it.y, x: it.x, s: it.str}); }
       }
-      for (const a of anchors) {
-        const cell = k => (a.cells[k] || []).sort((p, q) => q.y - p.y || p.x - q.x).map(c => c.s).join(' ').replace(/\s+/g, ' ').trim();
-        let nom = cell('nom'), prenom = cell('prenom'), comp = cell('nomcomplet');
-        if (comp && !nom) ({nom, prenom} = splitNom(comp.replace(/^\d+\s+/, '')));
-        else if (nom && !prenom) ({nom, prenom} = splitNom(nom.replace(/^\d+\s+/, '')));
-        else nom = nom.replace(/^\d+\s+/, '').toUpperCase();
-        if (!nom) continue;
-        let adr = cell('adresse'), cp = (cell('cp').match(/\d{5}/) || [''])[0], ville = cell('ville');
-        if (!cp) { const s2 = splitAdresse([adr, ville].filter(Boolean).join(' ')); adr = s2.adresse; cp = s2.cp; ville = ville && !s2.ville ? ville : s2.ville; }
-        let dn = datesIn(cell('naissance')), db = datesIn(cell('bapteme'));
-        if (!db.length && dn.length > 1) db = [dn[1]];
-        const f = cell('fonction').toLowerCase(), titre = cell('titre');
-        rows.push([titre ? (/^m\.?$/i.test(titre) ? 'Frère' : /^m(me|lle|elle)/i.test(titre) ? 'Sœur' : '') : '', nom, prenom, adr, cp, ville.toUpperCase(), pickTel(cell('tel')), pickMail(cell('mail')), dn[0] || '', db[0] || '', /ancien/.test(f) ? 'Ancien' : /assist/.test(f) ? 'Assistant' : '']);
-      }
+      prev = {anchors, maxd: Math.max(maxd, 6)}; allAnchors.push(...anchors);
+    }
+    for (const a of allAnchors) {
+      const cell = k => (a.cells[k] || []).sort((p, q) => q.y - p.y || p.x - q.x).map(c => c.s).join(' ').replace(/\s+/g, ' ').trim();
+      let nom = cell('nom'), prenom = cell('prenom'), comp = cell('nomcomplet');
+      if (comp && !nom) ({nom, prenom} = splitNom(comp.replace(/^\d+\s+/, '')));
+      else if (nom && !prenom) ({nom, prenom} = splitNom(nom.replace(/^\d+\s+/, '')));
+      else nom = nom.replace(/^\d+\s+/, '').toUpperCase();
+      if (!nom) continue;
+      let adr = cell('adresse'), cp = (cell('cp').match(/\d{5}/) || [''])[0], ville = cell('ville');
+      if (!cp) { const s2 = splitAdresse([adr, ville].filter(Boolean).join(' ')); adr = s2.adresse; cp = s2.cp; ville = ville && !s2.ville ? ville : s2.ville; }
+      else adr = sansCodes(adr);
+      let dn = datesIn(cell('naissance')), db = datesIn(cell('bapteme'));
+      if (!db.length && dn.length > 1) db = [dn[1]];
+      const f = cell('fonction').toLowerCase(), titre = cell('titre'), t = telsIn(cell('tel') + ' ' + cell('fixe'));
+      rows.push([titre ? (/^m\.?$/i.test(titre) ? 'Frère' : /^m(me|lle|elle)/i.test(titre) ? 'Sœur' : '') : '', nom, prenom, adr, cp, ville.toUpperCase(), t.mob[0] || '', t.fixe[0] || '', pickMail(cell('mail')), dn[0] || '', db[0] || '', /ancien/.test(f) ? 'Ancien' : /assist/.test(f) ? 'Assistant' : '']);
     }
     if (rows.length < 3) return null;
-    return [{name: `${file.name.replace(/\.pdf$/i, '')} — tableau (${rows.length} personnes)`, rows: [['Civilité', 'Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Mail', 'Date de naissance', 'Date de baptême', 'Fonction'], ...rows]}];
+    return [{name: `${file.name.replace(/\.pdf$/i, '')} — tableau (${rows.length} personnes)`, rows: [['Civilité', 'Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Fixe', 'Mail', 'Date de naissance', 'Date de baptême', 'Fonction'], ...rows]}];
   }
 
   /* « Liste des contacts en cas d'urgence » (export des assemblées) : colonnes Proclamateur | Famille | Urgence.
@@ -415,10 +546,9 @@ App.files = (() => {
         if (l.items.every(i => i.bold) && !/@|\(m\)|\(f\)/.test(text)) { cur = {name: text, addr: [], tel: '', fixe: '', mail: '', stop: false}; people.push(cur); continue; }
         if (!cur) continue;
         if (/@/.test(text)) { cur.stop = true; if (!cur.mail) cur.mail = (text.match(/[^\s()]+@[^\s()]+/) || [''])[0]; continue; }
-        if (/\((m|f|e)\)/.test(text) || /^[\d .+()-]{8,}$/.test(text)) {
+        if (/\((m|f|e|t)\)/.test(text) || /^[\d .+()\-]{8,}$/.test(text)) {
           cur.stop = true;
-          const m = text.match(/\(m\)\s*([\d .+]{8,})/); if (m && !cur.tel) cur.tel = m[1].replace(/\D/g, '').replace(/^33/, '0').replace(/(\d{2})(?=\d)/g, '$1 ').trim();
-          const f = text.match(/\(f\)\s*([\d .+]{8,})/); if (f && !cur.fixe) cur.fixe = f[1].replace(/\D/g, '').replace(/(\d{2})(?=\d)/g, '$1 ').trim();
+          const t = telsIn(text); if (!cur.tel && t.mob[0]) cur.tel = t.mob[0]; if (!cur.fixe && t.fixe[0]) cur.fixe = t.fixe[0];
           const e = text.match(/\(e\)\s*(\S+@\S+)/); if (e && !cur.mail) cur.mail = e[1];
           continue;
         }
@@ -426,22 +556,39 @@ App.files = (() => {
       }
     }
     if (!people.length) return null;
-    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Mail', 'Assemblée']];
+    const rows = [['Nom', 'Prénom', 'Adresse', 'Code postal', 'Ville', 'Portable', 'Fixe', 'Mail', 'Assemblée']];
     for (const p of people) {
       const toks = p.name.split(' '), up = toks.filter(t => t.length > 1 && t === t.toUpperCase() && /[A-ZÀ-Ý]/.test(t));
       const nom = up.length && up.length < toks.length ? up.join(' ') : toks[0], prenom = toks.filter(t => !nom.split(' ').includes(t)).join(' ');
-      const a = p.addr.join(' ').replace(/\s+/g, ' ').replace(/(\w)- (\w)/g, '$1-$2').trim(), m = a.match(/^(.*?)[,\s]*\b(\d{2}) ?(\d{3})\b\s*(.*)$/);
-      const street = m ? m[1].replace(/[,\s]+$/, '') : a, cp = m ? m[2] + m[3] : '', ville = m ? m[4].replace(/\bcedex\b.*$/i, '').trim().toUpperCase() : '';
-      rows.push([nom, prenom, street, cp, ville, p.tel || p.fixe, p.mail, asm]);
+      const a = splitAdresse(p.addr);
+      rows.push([nom, prenom, a.adresse, a.cp, a.ville, p.tel, p.fixe, p.mail, asm]);
     }
     return [{name: `${file.name.replace(/\.pdf$/i, '')} — contacts d’urgence (${people.length} proclamateurs)`, rows}];
   }
 
+  // Grille (Excel, CSV) ou lignes de texte → morceaux positionnés, pour la lecture automatique par blocs
+  const gridItems = rows => rows.flatMap((r, ri) => r.map((v, ci) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return {x: ci * 100, y: -ri * 20, w: Math.min(95, t.length * 4.5), h: 10, str: t, page: 1, bold: false}; }).filter(i => i.str));
   async function readTable(file) {
-    if (/\.pdf$/i.test(file.name)) return readPdf(file);
-    if (/\.csv$/i.test(file.name)) return readCsv(await file.text());
-    if (/\.xls[xm]$/i.test(file.name)) return readXlsx(file);
-    throw new Error('Format non pris en charge (utilisez .xlsx, .xlsm, .csv ou .pdf).');
+    const name = file.name || '';
+    if (/\.pdf$/i.test(name)) return readPdf(file);
+    let sheets;
+    if (/\.(csv|tsv)$/i.test(name)) sheets = readCsv(await file.text());
+    else if (/\.xls[xm]$/i.test(name)) sheets = await readXlsx(file);
+    else if (/\.docx$/i.test(name)) {
+      const cells = (await readLayout(file))[0] || [];
+      return readItems([cells.map(c => ({x: c.x, y: -c.y, w: Math.min(c.w, c.text.length * 4.5), h: 10, str: c.text, page: 1, bold: false}))], file, 'Word');
+    } else if (/\.txt$/i.test(name) || file.type === 'text/plain') {
+      const text = await file.text();
+      if ((text.split(/\r?\n/)[0].match(/\t/g) || []).length >= 2) sheets = readCsv(text);
+      else {
+        // Texte libre (liste copiée d'un mail…) : chaque groupe de mots séparé par 2 espaces ou une tabulation est une case
+        const items = text.split(/\r?\n/).flatMap((line, li) => { const out = []; const re = /\S+(?: \S+)*/g; let m; while ((m = re.exec(line.replace(/\t/g, '    ')))) out.push({x: m.index * 5, y: -li * 14, w: m[0].length * 4.5, h: 10, str: m[0], page: 1, bold: false}); return out; });
+        return readItems([items], file, 'texte');
+      }
+    } else throw new Error('Format non pris en charge (utilisez .xlsx, .xlsm, .csv, .pdf, .docx ou .txt).');
+    // Une liste présentée en blocs dans une seule colonne (nom, adresse, téléphone l'un sous l'autre) : lecture par blocs proposée en plus
+    for (const sh of [...sheets]) { try { const r = readBlocs([gridItems(sh.rows)], {name: sheets.length > 1 ? `Feuille « ${sh.name} »` : name}); if (r) { const filled = sh.rows.filter(x => x.some(c => String(c ?? '').trim())), avg = filled.reduce((n, x) => n + x.filter(c => String(c ?? '').trim()).length, 0) / Math.max(1, filled.length); if (avg < 2.5) sheets.unshift(r[0]); else sheets.push(r[0]); } } catch (e) { console.warn('Lecture par blocs', e); } }
+    return sheets;
   }
 
   /* ---------- Mise en page d'un document (organigrammes) ----------
@@ -485,14 +632,15 @@ App.files = (() => {
     if (/\.docx$/i.test(name)) {
       const z = await unzip(await file.arrayBuffer()), d = xml(await z.text('word/document.xml'));
       const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-      const txt = n => [...n.getElementsByTagNameNS(W, 't')].map(t => t.textContent).join('').replace(/\s+/g, ' ').trim();
+      // texte d'un paragraphe avec ses tabulations et retours à la ligne
+      const ptxt = n => { let out = ''; for (const el of n.getElementsByTagNameNS(W, '*')) { if (el.localName === 't') out += el.textContent; else if (el.localName === 'tab') out += '\t'; else if (el.localName === 'br' || el.localName === 'cr') out += '\n'; } return out; };
       const body = d.getElementsByTagNameNS(W, 'body')[0], cells = []; let y = 0;
       for (const node of body ? [...body.children] : []) {
-        if (node.localName === 'p') { for (const part of txt(node).split(/\t+/)) if (part) cells.push({x: 0, y, w: 400, h: 12, text: part}); y += 20; }
+        if (node.localName === 'p') { for (const line of ptxt(node).split('\n')) { line.split(/\t+/).forEach((part, k) => { part = part.replace(/\s+/g, ' ').trim(); if (part) cells.push({x: k * 150, y, w: k ? 140 : 400, h: 12, text: part}); }); y += 20; } }
         else if (node.localName === 'tbl') {
           for (const tr of [...node.children].filter(n => n.localName === 'tr')) {
             const tcs = [...tr.children].filter(n => n.localName === 'tc'); let maxLines = 1;
-            tcs.forEach((tc, ci) => { const paras = [...tc.children].filter(n => n.localName === 'p').map(txt).filter(Boolean); maxLines = Math.max(maxLines, paras.length);
+            tcs.forEach((tc, ci) => { const paras = [...tc.children].filter(n => n.localName === 'p').flatMap(p => ptxt(p).split('\n')).map(t => t.replace(/\s+/g, ' ').trim()).filter(Boolean); maxLines = Math.max(maxLines, paras.length);
               paras.forEach((t, li) => cells.push({x: ci * 150, y: y + li * 20, w: 140, h: 12, text: t})); });
             y += maxLines * 20 + 10;
           }
@@ -527,5 +675,5 @@ App.files = (() => {
     return new Blob([...parts, ...central, new Uint8Array(end.buffer)], {type: 'application/zip'});
   }
 
-  return {readTable, readXlsx, readCsv, readPdf, readLayout, zip, unzip};
+  return {readTable, readXlsx, readCsv, readPdf, readLayout, zip, unzip, telsIn, _tests: {readBlocs, nameIn, telsIn, splitAdresse, pdfItems}};
 })();
