@@ -548,9 +548,12 @@ App.annuaire = (() => {
       <p style="margin:0">Les fiches <strong>S-21 « Activité du proclamateur »</strong> donnent pour chaque proclamateur : frère ou sœur, date de naissance, date de baptême, ancien ou assistant, pionnier permanent ou spécial.</p>
       <p style="margin:0">Une date de naissance <strong>sans date de baptême</strong> indique un <strong>PNB</strong>.</p>
       <p class="small muted" style="margin:0">Choisissez ${dirOk ? 'le dossier qui contient les fiches, ou ' : ''}les fichiers PDF (vous pouvez en sélectionner plusieurs à la fois ; un fichier ZIP est accepté aussi). L’étape suivante compare avec l’annuaire et vous laisse valider chaque changement.</p></div>`,
-      actions: [{label: 'Annuler', value: null}, {label: dirOk ? 'Choisir des fichiers' : 'Choisir les fichiers', kind: dirOk ? '' : 'primary', value: 'files'}, ...(dirOk ? [{label: 'Choisir un dossier', kind: 'primary', value: 'dir'}] : [])]});
+      // Safari n'ouvre la fenêtre de choix que si elle est demandée pendant le clic lui-même : on l'ouvre donc ici, sans attendre.
+      actions: [{label: 'Annuler', value: null},
+        {label: dirOk ? 'Choisir des fichiers' : 'Choisir les fichiers', kind: dirOk ? '' : 'primary', onClick: () => ({p: pickFiles('.pdf,.zip,application/pdf,application/zip', false)})},
+        ...(dirOk ? [{label: 'Choisir un dossier', kind: 'primary', onClick: () => ({p: pickFiles('', true)})}] : [])]});
     if (!how) return;
-    const picked = await pickFiles('.pdf,.zip,application/pdf,application/zip', how === 'dir');
+    const picked = await how.p;
     if (!picked || !picked.length) return api.toast('Aucun fichier PDF choisi.', 'error');
     // ZIP : on en sort les PDF
     const pdfs = [];
