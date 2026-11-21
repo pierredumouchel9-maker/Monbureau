@@ -892,7 +892,7 @@ App.circo = (() => {
     center(`Cycle ${c.code} · d’après les responsabilités notées dans Mon Bureau`, R, 8.5, W / 2, 52, mute);
     if (o.manque.length || o.doublons.length) center(fitT([o.manque.length ? 'À pourvoir ou non renseigné : ' + o.manque.join(', ') : '', o.doublons.length ? 'À vérifier : ' + o.doublons.join(', ') : ''].filter(Boolean).join('   ·   '), R, 8, W - 2 * M), R, 8, W / 2, 65, red);
     // Collège des anciens
-    const mem = members(asm), fct = p => fonctionAt(c, p) ?? p.fonction;
+    const mem = membersAt(asm, c), fct = p => fonctionAt(c, p) ?? p.fonction;
     const nA = mem.filter(p => fct(p) === 'Ancien').length, nS = mem.filter(p => fct(p) === 'Assistant').length;
     const head = box(W / 2 - 120, 76, 240, 'Comité de service', COL.vert, null, null, `Frères nommés : ${nA} ancien${nA > 1 ? 's' : ''} · ${nS} assistant${nS > 1 ? 's' : ''}`);
     // Comité de service (3 cases) au-dessus de leurs services (6 colonnes)
@@ -1043,6 +1043,18 @@ App.circo = (() => {
     return sortedCycles().at(-1)?.id === c.id ? (p.fonction || '') : undefined;
   }
   // Dernière fiche enregistrée avant le cycle c (on remonte les cycles : un statut non retouché se prolonge)
+  // Parti (déménagement, décès) lors d'un cycle précédent, sans retour noté depuis : ne figure plus dans les cycles suivants
+  const RETOURS = ['Emménagement', 'Nouveau dans la liste', 'De nouveau actif'];
+  function partiAvant(c, p) {
+    if (RETOURS.includes(store().suivi?.[c.id]?.[p.id]?.evt)) return null;
+    for (const x of sortedCycles().filter(y => y.code < c.code).reverse()) {
+      const ev = store().suivi?.[x.id]?.[p.id]?.evt;
+      if (DEPARTS.includes(ev)) return {cycle: x, motif: ev};
+      if (RETOURS.includes(ev)) return null;
+    }
+    return null;
+  }
+  const membersAt = (asm, c) => members(asm).filter(p => !partiAvant(c, p));
   function lastStored(c, p) { for (const x of sortedCycles().filter(y => y.code < c.code).reverse()) { const pe = store().suivi?.[x.id]?.[p.id]; if (pe) return pe; } return null; }
   function prevStatut(c, p) { const pe = lastStored(c, p); return pe ? (pe.statut || '') : undefined; }
   // Couleur de ligne : IN gris, ancien bleu foncé, assistant bleu clair, PP orange
@@ -1231,7 +1243,8 @@ App.circo = (() => {
     const c = cycles.find(x => x.id === state.cycle) || cycles.at(-1); state.cycle = c.id;
     const asm = asms.find(a => a === state.asm) || asms[0]; state.asm = asm;
     const mois = monthsElapsed(c), objectif = mois * HEURES_MOIS;
-    const people = members(asm).sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr') || (a.prenom || '').localeCompare(b.prenom || '', 'fr'));
+    const partis = members(asm).filter(p => partiAvant(c, p));
+    const people = membersAt(asm, c).sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr') || (a.prenom || '').localeCompare(b.prenom || '', 'fr'));
     const rows = people.map(p => ({p, e: entry(c, p)}));
     const evtOf = r => r.e.evt || autoEvt(prevStatut(c, r.p), r.e.statut);
     const evtCount = ev => rows.filter(r => evtOf(r) === ev).length;
@@ -1249,6 +1262,10 @@ App.circo = (() => {
     const statItems = [];
     const stat = (lab, v, sub = '', red = false) => (statItems.push({lab, v, sub, red}), '') + `<div class="card" style="padding:12px 14px"><div class="muted small" style="min-height:2.6em;line-height:1.3">${lab}</div><div class="stat" style="font-size:22px;text-align:center${red ? ';color:#c81a1a' : ''}">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
     el.innerHTML = `${header('proclamateurs')}
+      ${partis.length ? `<div class="notice small row" style="margin-bottom:12px;align-items:center">
+        <span style="flex:1">${partis.length} personne(s) partie(s) lors d’un cycle précédent ne figure(nt) plus dans la liste du cycle ${api.esc(c.code)} :
+        ${partis.map(p => { const x = partiAvant(c, p); return `<strong>${api.esc((p.nom || '').toUpperCase())} ${api.esc(p.prenom || '')}</strong> (${api.esc(x.motif.toLowerCase())}, cycle ${api.esc(x.cycle.code)})`; }).join(', ')}.</span>
+        <button class="btn" id="pPartis">Retirer de l’annuaire…</button></div>` : ''}
       <div class="row" style="margin-bottom:14px">
         <select id="pAsm" style="width:auto;font-weight:600">${asms.map(a => `<option ${a === asm ? 'selected' : ''}>${api.esc(a)}</option>`).join('')}</select>
         <select id="pCyc" style="width:auto">${cycles.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>Cycle ${x.code}</option>`).join('')}</select>
@@ -1379,6 +1396,17 @@ App.circo = (() => {
     api.$('#pQ', el).addEventListener('input', e => { state.q = e.target.value; clearTimeout(state.t); state.t = setTimeout(() => { redraw(); const i = api.$('#pQ', el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); });
     api.$('#pF', el).addEventListener('change', e => { state.filt = e.target.value; redraw(); });
     api.$('#pImp', el).addEventListener('click', () => importSuiviFlow(redraw));
+    api.$('#pPartis', el)?.addEventListener('click', async () => {
+      if (!await api.confirm('Retirer de l’annuaire', `${partis.length} personne(s) vont être retirées de l’annuaire. Leur trace reste dans le cycle où le départ a été noté. Continuer ?`, 'Retirer', true)) return;
+      for (const p of partis) {
+        const x = partiAvant(c, p), e = suivi(x.cycle)[p.id];
+        (x.cycle.partis ??= []).push({nom: (p.nom || '').toUpperCase(), prenom: p.prenom || '', asm: p.assemblee || '', motif: x.motif, entry: {...e}});
+        (x.cycle.mouvements ??= []).push({type: 'retrait', date: new Date().toISOString(), fichier: x.motif, nom: (p.nom || '').toUpperCase(), prenom: p.prenom || '', asm: p.assemblee || ''});
+      }
+      const ids = new Set(partis.map(p => p.id));
+      api.data.persons = api.data.persons.filter(p => !ids.has(p.id));
+      api.save(); api.toast(`${ids.size} personne(s) retirée(s) de l’annuaire`); redraw();
+    });
     api.$('#pAdd', el).addEventListener('click', async () => {
       const r = await App.annuaire.editPerson(); if (!r) return;
       const p = api.data.persons.at(-1); if (p && !p.assemblee) { p.assemblee = asm; api.save(); }
@@ -1455,7 +1483,7 @@ App.circo = (() => {
   const euro = v => (Math.round(v * 100) / 100).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
   const num = v => { const x = parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')); return isNaN(x) ? null : x; };
   function proclCount(c, asm) {
-    const procl = members(asm).map(p => entry(c, p)).filter(e => !DEPARTS.includes(e.evt) && (ACTIF(e.statut) || e.statut === 'PNB'));
+    const procl = membersAt(asm, c).map(p => entry(c, p)).filter(e => !DEPARTS.includes(e.evt) && (ACTIF(e.statut) || e.statut === 'PNB'));
     const s21 = procl.filter(e => e.s21).length;
     return {liste: procl.length, s21, n: s21 || procl.length, source: s21 ? 'S-21' : 'liste'};
   }
