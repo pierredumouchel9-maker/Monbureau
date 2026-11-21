@@ -1104,7 +1104,8 @@ App.circo = (() => {
     const S = suivi(c);
     if (!S[p.id]) {
       const pe = lastStored(c, p);
-      return {statut: pe ? pe.statut || '' : '', heures: null, eb: null, pa: null, ir: null, $new: true};
+      // sans cycle précédent : le statut de la fiche de l'annuaire (PNB, PP, PS lus sur les S-21)
+      return {statut: pe ? pe.statut || '' : (['PNB', 'PP', 'PS'].includes(p.statut) ? p.statut : ''), heures: null, eb: null, pa: null, ir: null, $new: true};
     }
     if (S[p.id].evt === 'Réactivé') S[p.id].evt = 'De nouveau actif';   // ancien intitulé
     return S[p.id];

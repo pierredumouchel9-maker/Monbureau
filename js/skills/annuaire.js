@@ -4,7 +4,7 @@ App.annuaire = (() => {
   const api = App.api;
   const FIELDS = [
     {key: 'civilite', label: 'Civilité'}, {key: 'prenom', label: 'Prénom'}, {key: 'nom', label: 'Nom'},
-    {key: 'naissance', label: 'Date de naissance'}, {key: 'bapteme', label: 'Date de baptême'}, {key: 'fonction', label: 'Fonction'},
+    {key: 'naissance', label: 'Date de naissance'}, {key: 'bapteme', label: 'Date de baptême'}, {key: 'fonction', label: 'Fonction'}, {key: 'statut', label: 'Statut'},
     {key: 'telephone', label: 'Portable'}, {key: 'fixe', label: 'Fixe'}, {key: 'assemblee', label: 'Assemblée'}, {key: 'email', label: 'Mail'},
     {key: 'adresse', label: 'Adresse'}, {key: 'cp', label: 'Code postal'}, {key: 'ville', label: 'Ville'}, {key: 'notes', label: 'Notes'}
   ];
@@ -12,6 +12,8 @@ App.annuaire = (() => {
   const fullName = p => [p.prenom, (p.nom || '').toUpperCase()].filter(Boolean).join(' ');
   const emailOk = e => !e || /^[^\s@,;]+@[^\s@,;]+\.[a-z]{2,}$/i.test(e.trim());
   const FONCTIONS = ['Ancien', 'Assistant'];
+  // Statut lu sur les fiches S-21 (PNB : date de naissance sans date de baptême ; PP, PS : cases cochées)
+  const STATUTS = [['', 'Proclamateur'], ['PNB', 'PNB (non baptisé)'], ['PP', 'Pionnier permanent'], ['PS', 'Pionnier spécial']];
   const fct = v => { const n = api.norm(v); if (/^(a|anc|ancien|ancienne?s?)$/.test(n)) return 'Ancien'; if (/^(ass|assist|assistant|assistants|am|sm|assistant ministeriel|serviteur ministeriel)$/.test(n)) return 'Assistant'; return ''; };
   const civ = v => { const n = api.norm(v); if (!n) return ''; if (/^(f|frere|fr|m|monsieur)$/.test(n)) return 'Frère'; if (/^(s|soeur|sr|mme|madame)$/.test(n)) return 'Sœur'; return String(v).trim(); };
   function splitName(full) {
@@ -218,6 +220,7 @@ App.annuaire = (() => {
       <label class="field"><span>Date de naissance</span><input type="date" name="naissance" value="${api.esc(p.naissance)}" max="${new Date().toISOString().slice(0, 10)}"></label>
       <label class="field"><span>Date de baptême</span><input type="date" name="bapteme" value="${api.esc(p.bapteme)}" max="${new Date().toISOString().slice(0, 10)}"></label>
       <label class="field"><span>Fonction</span><select name="fonction"><option value=""></option>${FONCTIONS.map(v => `<option ${p.fonction === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label class="field"><span>Statut</span><select name="statut">${STATUTS.map(([v, l]) => `<option value="${v}" ${(p.statut || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field"><span>Portable</span><input type="tel" name="telephone" value="${api.esc(p.telephone)}"></label>
       <label class="field"><span>Fixe</span><input type="tel" name="fixe" value="${api.esc(p.fixe)}"></label>
       <label class="field"><span>Assemblée</span><input type="text" name="assemblee" list="congList" value="${api.esc(p.assemblee)}"><datalist id="congList">${congs}</datalist></label>
@@ -234,7 +237,8 @@ App.annuaire = (() => {
     }});
     actions.push({label: 'Annuler', value: null}, {label: 'Enregistrer', kind: 'primary', onClick: async b => {
       const f = api.$('form', b), err = api.$('#pErr', b);
-      for (const k of ['civilite', 'prenom', 'nom', 'naissance', 'bapteme', 'fonction', 'assemblee', 'telephone', 'fixe', 'email', 'adresse', 'cp', 'ville', 'notes']) p[k] = f[k].value.trim();
+      for (const k of ['civilite', 'prenom', 'nom', 'naissance', 'bapteme', 'fonction', 'statut', 'assemblee', 'telephone', 'fixe', 'email', 'adresse', 'cp', 'ville', 'notes']) p[k] = f[k].value.trim();
+      if (p.statut === 'PNB' && p.bapteme) { err.textContent = 'Un PNB n’est pas baptisé : retirez la date de baptême ou changez le statut.'; err.classList.remove('hidden'); return false; }
       if (p.naissance && p.bapteme && p.bapteme < p.naissance) { err.textContent = 'La date de baptême est antérieure à la date de naissance.'; err.classList.remove('hidden'); return false; }
       p.nom = p.nom.toUpperCase();
       if (!p.prenom && !p.nom) { err.textContent = 'Indiquez au moins un prénom ou un nom.'; err.classList.remove('hidden'); return false; }
@@ -445,9 +449,9 @@ App.annuaire = (() => {
   }
 
   /* ---------- Mise à jour par comparaison ---------- */
-  const COMPARED = ['civilite', 'naissance', 'bapteme', 'fonction', 'telephone', 'fixe', 'email', 'adresse', 'cp', 'ville', 'assemblee'];
+  const COMPARED = ['civilite', 'naissance', 'bapteme', 'fonction', 'statut', 'telephone', 'fixe', 'email', 'adresse', 'cp', 'ville', 'assemblee'];
   const labelOf = k => (FIELDS.find(f => f.key === k) || {label: k}).label;
-  const shown = (k, v) => (k === 'naissance' || k === 'bapteme') ? fmtDate(v) : (v || '');
+  const shown = (k, v) => (k === 'naissance' || k === 'bapteme') ? fmtDate(v) : k === 'statut' ? (v ? v : 'Proclamateur') : (v || '');
   function same(k, a, b) {
     a = String(a || ''); b = String(b || '');
     if (k === 'telephone' || k === 'fixe') return a.replace(/\D/g, '').replace(/^33/, '0') === b.replace(/\D/g, '').replace(/^33/, '0');
@@ -455,7 +459,9 @@ App.annuaire = (() => {
     return api.norm(a) === api.norm(b);
   }
 
-  async function compareFlow(unique, mapped, fileName) {
+  async function compareFlow(unique, mapped, fileName, opts = {}) {
+    // champs où une valeur vide du fichier est une vraie information (fiche S-21 : pas de case « Ancien » cochée = pas ancien)
+    const explicit = opts.explicit || new Set();
     const fields = COMPARED.filter(k => mapped.has(k));
     const congs = [...new Set(unique.map(p => api.norm(p.assemblee)).filter(Boolean))];
     const byKey = indexOf(api.data.persons), fileIdx = indexOf(unique);
@@ -463,7 +469,7 @@ App.annuaire = (() => {
     const modifs = [];
     for (const p of unique) {
       const q = byKey.find(p); if (!q) continue;
-      const changes = fields.filter(k => !same(k, q[k], p[k])).map(k => ({k, old: q[k] || '', val: p[k] || '', kind: !q[k] ? 'ajout' : !p[k] ? 'vide' : 'modif'}));
+      const changes = fields.filter(k => p[k] !== undefined && !same(k, q[k], p[k])).map(k => ({k, old: q[k] || '', val: p[k] || '', kind: !q[k] ? 'ajout' : !p[k] && !explicit.has(k) ? 'vide' : 'modif'}));
       if (changes.length) modifs.push({person: q, changes});
     }
     const inScope = q => !congs.length || congs.includes(api.norm(q.assemblee));
@@ -473,7 +479,7 @@ App.annuaire = (() => {
 
     const kindTxt = {ajout: 'complété', modif: 'modifié', vide: 'absent du fichier'};
     const body = `<div class="stack">
-      <div class="notice small">Fichier « ${api.esc(fileName)} » comparé avec ${api.esc(scopeTxt)}.
+      <div class="notice small">${api.esc(opts.what || `Fichier « ${fileName} »`)} comparé avec ${api.esc(scopeTxt)}.
         <strong>${nouveaux.length}</strong> nouvelle(s), <strong>${modifs.length}</strong> fiche(s) modifiée(s), <strong>${absents.length}</strong> absente(s) du fichier, ${identiques} identique(s).
         Cochez ce que vous voulez appliquer.</div>
       ${nouveaux.length ? `<h3 style="margin:8px 0 0;font-size:15px">Nouvelles personnes (${nouveaux.length})</h3>
@@ -484,10 +490,10 @@ App.annuaire = (() => {
         ${modifs.map((m, i) => m.changes.map((c, j) => `<tr><td><input type="checkbox" data-mod="${i}.${j}" ${c.kind === 'vide' ? '' : 'checked'}></td>
           <td>${j === 0 ? `<strong>${api.esc((m.person.nom || '').toUpperCase())}</strong> ${api.esc(m.person.prenom)}` : ''}</td>
           <td>${labelOf(c.k)} <span class="pill ${c.kind === 'vide' ? 'warn' : ''}">${kindTxt[c.kind]}</span></td>
-          <td class="muted">${api.esc(shown(c.k, c.old)) || '—'}</td><td><strong>${api.esc(shown(c.k, c.val)) || '(vide)'}</strong></td></tr>`).join('')).join('')}</table></div>
+          <td class="muted">${api.esc(shown(c.k, c.old)) || '—'}</td><td><strong>${api.esc(shown(c.k, c.val)) || (explicit.has(c.k) ? 'aucune' : '(vide)')}</strong></td></tr>`).join('')).join('')}</table></div>
         <p class="small muted" style="margin:0">Les champs vides dans le fichier ne sont pas cochés : par défaut, l’information de l’annuaire est conservée.</p>` : ''}
-      ${absents.length ? `<h3 style="margin:8px 0 0;font-size:15px">Dans l’annuaire mais absentes du fichier (${absents.length})</h3>
-        <p class="small muted" style="margin:0">Elles ont peut-être déménagé ou changé d’assemblée. Cochez seulement celles à supprimer de l’annuaire.</p>
+      ${absents.length ? `<h3 style="margin:8px 0 0;font-size:15px">${opts.absentTitle || 'Dans l’annuaire mais absentes du fichier'} (${absents.length})</h3>
+        <p class="small muted" style="margin:0">${opts.absentNote || 'Elles ont peut-être déménagé ou changé d’assemblée.'} Cochez seulement celles à supprimer de l’annuaire.</p>
         <div class="table-wrap"><table class="list"><tr><th>Supprimer</th><th>Nom</th><th>Prénom</th><th>Assemblée</th><th>Portable</th></tr>
         ${absents.map((q, i) => `<tr><td><input type="checkbox" data-abs="${i}"></td><td><strong>${api.esc((q.nom || '').toUpperCase())}</strong></td><td>${api.esc(q.prenom)}</td><td>${api.esc(q.assemblee)}</td><td>${api.esc(q.telephone)}</td></tr>`).join('')}</table></div>` : ''}
       ${!nouveaux.length && !modifs.length && !absents.length ? '<p>L’annuaire est déjà à jour par rapport à ce fichier.</p>' : ''}
@@ -520,6 +526,77 @@ App.annuaire = (() => {
     api.save();
     api.toast(`${plan.add.length} ajout(s), ${plan.mod.length} changement(s), ${del.size} suppression(s)${cyc && (addedP.length || del.size) ? ` · noté dans l’analyse du cycle ${cyc}` : ''}`);
     return true;
+  }
+
+  /* ---------- Fiches S-21 (activité du proclamateur) ---------- */
+  // Plusieurs fichiers, un dossier entier ou un ZIP : chaque fichier est copié en mémoire (Safari) avant lecture.
+  function pickFiles(accept, dir) {
+    return new Promise(res => {
+      const i = document.createElement('input'); i.type = 'file'; i.multiple = true; i.accept = accept; if (dir) { i.webkitdirectory = true; i.setAttribute('webkitdirectory', ''); }
+      i.style.display = 'none'; document.body.appendChild(i);
+      const done = v => { res(v); setTimeout(() => i.remove(), 0); };
+      i.addEventListener('change', async () => { const out = [];
+        for (const f of i.files) { if (!/\.(pdf|zip)$/i.test(f.name)) continue; try { out.push(new File([await f.arrayBuffer()], f.webkitRelativePath || f.name, {type: f.type})); } catch (e) { api.toast(`${f.name} illisible : ${e.message}`, 'error'); } }
+        done(out); });
+      i.addEventListener('cancel', () => done(null));
+      i.click();
+    });
+  }
+  async function s21Flow(onDone) {
+    const dirOk = 'webkitdirectory' in document.createElement('input') && !/iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+    const how = await api.modal({title: 'Mettre à jour l’annuaire avec les fiches S-21', body: `<div class="stack">
+      <p style="margin:0">Les fiches <strong>S-21 « Activité du proclamateur »</strong> donnent pour chaque proclamateur : frère ou sœur, date de naissance, date de baptême, ancien ou assistant, pionnier permanent ou spécial.</p>
+      <p style="margin:0">Une date de naissance <strong>sans date de baptême</strong> indique un <strong>PNB</strong>.</p>
+      <p class="small muted" style="margin:0">Choisissez ${dirOk ? 'le dossier qui contient les fiches, ou ' : ''}les fichiers PDF (vous pouvez en sélectionner plusieurs à la fois ; un fichier ZIP est accepté aussi). L’étape suivante compare avec l’annuaire et vous laisse valider chaque changement.</p></div>`,
+      actions: [{label: 'Annuler', value: null}, {label: dirOk ? 'Choisir des fichiers' : 'Choisir les fichiers', kind: dirOk ? '' : 'primary', value: 'files'}, ...(dirOk ? [{label: 'Choisir un dossier', kind: 'primary', value: 'dir'}] : [])]});
+    if (!how) return;
+    const picked = await pickFiles('.pdf,.zip,application/pdf,application/zip', how === 'dir');
+    if (!picked || !picked.length) return api.toast('Aucun fichier PDF choisi.', 'error');
+    // ZIP : on en sort les PDF
+    const pdfs = [];
+    for (const f of picked) {
+      if (/\.zip$/i.test(f.name)) { try { const z = await App.files.unzip(await f.arrayBuffer()); for (const n of z.names.filter(n => /\.pdf$/i.test(n) && !/(^|\/)__MACOSX\//.test(n))) pdfs.push(new File([await z.bytes(n)], n.split('/').pop(), {type: 'application/pdf'})); } catch (e) { api.toast(`${f.name} : ${e.message}`, 'error'); } }
+      else pdfs.push(f);
+    }
+    api.toast(`Lecture de ${pdfs.length} fichier(s)…`);
+    const cards = [], ignored = [];
+    for (const f of pdfs) {
+      try { const c = await App.files.readS21(f); if (c.length) cards.push(...c); else ignored.push(f.name.split('/').pop()); }
+      catch (e) { ignored.push(`${f.name.split('/').pop()} (${e.message})`); }
+    }
+    if (!cards.length) return api.modal({title: 'Fiches S-21', body: `<p>Aucune fiche S-21 reconnue dans ${pdfs.length} fichier(s).</p>${ignored.length ? `<p class="small muted">${ignored.map(api.esc).join('<br>')}</p>` : ''}`, actions: [{label: 'Fermer', kind: 'primary'}]});
+
+    // Une personne peut avoir plusieurs fiches (plusieurs années) : la plus récente donne fonction et statut
+    const byKey = new Map();
+    for (const c of cards) {
+      const k = api.norm(`${c.prenom} ${c.nom}`), prev = byKey.get(k);
+      if (!prev) { byKey.set(k, {...c}); continue; }
+      const newer = (c.annee || '0') >= (prev.annee || '0') ? c : prev, older = newer === c ? prev : c;
+      byKey.set(k, {...older, ...newer, naissance: newer.naissance || older.naissance, bapteme: newer.bapteme || older.bapteme});
+    }
+    const list = [...byKey.values()].sort((a, b) => `${a.nom} ${a.prenom}`.localeCompare(`${b.nom} ${b.prenom}`, 'fr'));
+    const statutS21 = c => c.ps ? 'PS' : c.pp ? 'PP' : c.naissance && !c.bapteme ? 'PNB' : c.bapteme ? '' : undefined;
+    // Assemblée proposée : celle des personnes déjà connues, sinon le titre de la fiche
+    const idx = indexOf(api.data.persons), votes = {};
+    for (const c of list) { const q = idx.find({prenom: c.prenom, nom: c.nom}); const a = q?.assemblee || c.asm; if (a) votes[a] = (votes[a] || 0) + 1; }
+    const guess = Object.entries(votes).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    const act = c => c.participe == null ? '' : `${c.participe}/12 mois${c.pa ? ` · ${c.pa} PA` : ''}${c.heures ? ` · ${c.heures} h` : ''}${c.annee ? ` (${c.annee})` : ''}`;
+    const nPNB = list.filter(c => statutS21(c) === 'PNB').length;
+
+    const asm = await api.modal({title: `Fiches S-21 lues : ${list.length} proclamateur(s)`, wide: true, body: `<div class="stack">
+      <div class="notice small"><strong>${list.length}</strong> fiche(s) lue(s) dans ${pdfs.length} fichier(s)${nPNB ? ` · <strong>${nPNB}</strong> PNB (date de naissance sans baptême)` : ''}${ignored.length ? ` · ${ignored.length} fichier(s) sans fiche S-21 ignoré(s)` : ''}.</div>
+      <label class="field"><span>Assemblée de ces proclamateurs</span><input type="text" id="s21Asm" list="s21AsmL" value="${api.esc(guess)}" placeholder="Nom de l’assemblée"><datalist id="s21AsmL">${api.data.congregations.map(c => `<option value="${api.esc(c.nom)}">`).join('')}</datalist></label>
+      <div class="table-wrap" style="max-height:340px"><table class="list"><tr><th>Nom</th><th>Prénom</th><th></th><th>Naissance</th><th>Baptême</th><th>Statut</th><th>Fonction</th><th>Activité</th></tr>
+      ${list.map(c => { const st = statutS21(c); return `<tr><td><strong>${api.esc(c.nom)}</strong></td><td>${api.esc(c.prenom)}</td><td>${c.homme ? 'Frère' : c.femme ? 'Sœur' : ''}</td><td>${api.esc(c.naissance)}</td><td>${api.esc(c.bapteme)}</td>
+        <td>${st ? `<span class="pill ${st === 'PNB' ? 'warn' : ''}">${st}</span>` : st === '' ? 'Proclamateur' : '<span class="muted">?</span>'}</td><td>${c.ancien ? 'Ancien' : c.assistant ? 'Assistant' : ''}</td><td class="small">${act(c)}</td></tr>`; }).join('')}</table></div>
+      ${ignored.length ? `<details class="small muted"><summary>Fichiers ignorés (${ignored.length})</summary>${ignored.map(api.esc).join('<br>')}</details>` : ''}</div>`,
+      actions: [{label: 'Annuler', value: null}, {label: 'Comparer avec l’annuaire…', kind: 'primary', onClick: b => { const v = api.$('#s21Asm', b).value.trim().toUpperCase(); if (!v) { api.toast('Indiquez l’assemblée.', 'error'); return false; } return v; }}]});
+    if (!asm) return;
+    const unique = list.map(c => ({civilite: c.homme ? 'Frère' : c.femme ? 'Sœur' : '', prenom: c.prenom, nom: c.nom.toUpperCase(), naissance: parseDate(c.naissance), bapteme: parseDate(c.bapteme),
+      fonction: c.ancien ? 'Ancien' : c.assistant ? 'Assistant' : '', statut: statutS21(c), assemblee: asm}));
+    const mapped = new Set(['civilite', 'naissance', 'bapteme', 'fonction', 'statut']);
+    if (await compareFlow(unique, mapped, `${pdfs.length} fiche(s) S-21`, {what: `${list.length} fiche(s) S-21`, explicit: new Set(['fonction', 'statut']),
+      absentTitle: 'Dans l’annuaire mais sans fiche S-21', absentNote: 'Leur fiche manque peut-être dans le dossier, ou elles ont quitté l’assemblée.'}) && onDone) onDone();
   }
 
   /* ---------- Assemblées ---------- */
@@ -575,7 +652,7 @@ App.annuaire = (() => {
     function render() {
       const d = api.data;
       el.innerHTML = `<div class="page-head"><div><h1>Annuaire</h1><p>Chaque personne est enregistrée une seule fois et sert à tous les skills.</p></div>
-        <div class="row"><button class="btn" id="aImp" title="Excel, CSV, PDF, Word ou texte : noms, prénoms, mails, portables, fixes et adresses sont repérés automatiquement">Importer une liste</button><button class="btn" id="aCmp">Mettre à jour depuis un fichier</button><button class="btn" id="aDup">Doublons</button><button class="btn" id="aPho" title="Ajouter des photos en nombre : fichiers nommés « NOM Prénom »">Photos</button>
+        <div class="row"><button class="btn" id="aImp" title="Excel, CSV, PDF, Word ou texte : noms, prénoms, mails, portables, fixes et adresses sont repérés automatiquement">Importer une liste</button><button class="btn" id="aCmp">Mettre à jour depuis un fichier</button><button class="btn" id="aS21" title="Dates de naissance et de baptême, PNB, ancien, assistant, pionnier : d'après un dossier de fiches S-21">Fiches S-21</button><button class="btn" id="aDup">Doublons</button><button class="btn" id="aPho" title="Ajouter des photos en nombre : fichiers nommés « NOM Prénom »">Photos</button>
         <button class="btn primary" id="aAdd">${tab === 'personnes' ? '+ Personne' : '+ Assemblée'}</button></div></div>
         <div class="tabs"><button data-tab="personnes" class="${tab === 'personnes' ? 'active' : ''}">Personnes (${d.persons.length})</button>
         <button data-tab="assemblees" class="${tab === 'assemblees' ? 'active' : ''}">Assemblées (${d.congregations.length})</button></div>
@@ -586,7 +663,7 @@ App.annuaire = (() => {
           <select id="aF" style="max-width:260px"><option value="">Toutes les assemblées</option>${[...d.congregations].sort((a, b) => a.nom.localeCompare(b.nom)).map(c => `<option ${filt === c.nom ? 'selected' : ''}>${api.esc(c.nom)}</option>`).join('')}</select>
           <select id="aFct" style="max-width:220px"><option value="">Tous</option>
             <optgroup label="Fonction">${FONCTIONS.map(v => `<option value="f:${v}" ${ffct === 'f:' + v ? 'selected' : ''}>${v}s</option>`).join('')}<option value="aucune" ${ffct === 'aucune' ? 'selected' : ''}>Sans fonction</option></optgroup>
-            <optgroup label="Pionniers">${['PP', 'PS'].map(v => `<option value="s:${v}" ${ffct === 's:' + v ? 'selected' : ''}>${v === 'PP' ? 'PP (pionniers permanents)' : 'PS (pionniers spéciaux)'}</option>`).join('')}</optgroup>
+            <optgroup label="Statut">${['PNB', 'PP', 'PS'].map(v => `<option value="s:${v}" ${ffct === 's:' + v ? 'selected' : ''}>${v === 'PP' ? 'PP (pionniers permanents)' : v === 'PS' ? 'PS (pionniers spéciaux)' : 'PNB (non baptisés)'}</option>`).join('')}</optgroup>
             <optgroup label="Responsabilités">${['CCA', 'Secrétaire', 'Resp. Prédication', 'CLH'].map(v => `<option value="r:${v}" ${ffct === 'r:' + v ? 'selected' : ''}>${v}</option>`).join('')}</optgroup></select>
           <span class="small muted" id="aCount"></span></div>
           <div class="table-wrap"><table class="list"><thead><tr><th style="width:48px"></th><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr></thead><tbody id="aRows"></tbody></table></div>`;
@@ -594,11 +671,13 @@ App.annuaire = (() => {
         const avatar = p => { const ph = api.photos.get(p.id);
           return ph ? `<img src="${ph}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:50%;object-fit:cover;display:block">`
             : `<div style="width:40px;height:40px;border-radius:50%;background:var(--line,#e5e7eb);color:var(--muted,#6b7280);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:600">${api.esc(((p.prenom || '')[0] || '') + ((p.nom || '')[0] || '')).toUpperCase()}</div>`; };
+        let statutOf = () => '';
         const draw = () => {
           const nq = api.norm(q);
           // statut de pionnier : le plus récent noté dans l'analyse de la circonscription
           const circ = api.moduleData('circonscription', {cycles: [], suivi: {}}), cyc = [...(circ.cycles || [])].sort((a, b) => b.code.localeCompare(a.code));
-          const statutOf = p => { for (const c of cyc) { const e = circ.suivi?.[c.id]?.[p.id]; if (e && e.statut !== undefined) return e.statut || ''; } return ''; };
+          // à défaut, le statut de la fiche (lu sur les S-21)
+          statutOf = p => { for (const c of cyc) { const e = circ.suivi?.[c.id]?.[p.id]; if (e && e.statut !== undefined) return e.statut || ''; } return ['PNB', 'PP', 'PS'].includes(p.statut) ? p.statut : ''; };
           const okF = p => !ffct ? true : ffct === 'aucune' ? !p.fonction : ffct.startsWith('f:') ? p.fonction === ffct.slice(2)
             : ffct.startsWith('s:') ? statutOf(p) === ffct.slice(2) : ffct.startsWith('r:') ? (p.resp || []).includes(ffct.slice(2)) : true;
           const rows = d.persons.filter(p => (!filt || api.norm(p.assemblee) === api.norm(filt)) && okF(p) && (!nq || api.norm(Object.values(p).join(' ')).includes(nq)))
@@ -606,7 +685,7 @@ App.annuaire = (() => {
           const cnt = api.$('#aCount', el); if (cnt) cnt.textContent = `${rows.length} personne(s)`;
           const age = iso => { const n = yearsSince(iso); return iso ? `${fmtDate(iso)}<div class="small muted">${n} an${n > 1 ? 's' : ''}</div>` : ''; };
           api.$('#aRows', el).innerHTML = rows.map(p => `<tr class="click" data-id="${p.id}"><td style="padding:4px 6px">${avatar(p)}</td><td><strong>${api.esc((p.nom || '').toUpperCase())}</strong>${p.assemblee ? `<div class="small muted">${api.esc(p.assemblee)}</div>` : ''}</td>
-            <td>${api.esc(p.prenom)}</td><td>${age(p.naissance)}</td><td>${age(p.bapteme)}</td><td>${p.fonction ? `<span class="pill ${p.fonction === 'Ancien' ? 'ok' : ''}">${api.esc(p.fonction)}</span>` : ''}</td><td style="white-space:nowrap">${api.esc(p.telephone)}${p.fixe ? `<div class="small muted">${api.esc(p.fixe)}</div>` : ''}</td>
+            <td>${api.esc(p.prenom)}</td><td>${age(p.naissance)}</td><td>${age(p.bapteme)}</td><td>${p.fonction ? `<span class="pill ${p.fonction === 'Ancien' ? 'ok' : ''}">${api.esc(p.fonction)}</span>` : ''}${statutOf(p) ? ` <span class="pill ${statutOf(p) === 'PNB' ? 'warn' : ''}">${api.esc(statutOf(p))}</span>` : ''}</td><td style="white-space:nowrap">${api.esc(p.telephone)}${p.fixe ? `<div class="small muted">${api.esc(p.fixe)}</div>` : ''}</td>
             <td>${p.email ? `<a href="mailto:${api.esc(p.email)}" onclick="event.stopPropagation()">${api.esc(p.email)}</a>` : ''}${emailOk(p.email) ? '' : ' <span class="pill warn">à vérifier</span>'}</td>
             <td>${api.esc(p.adresse)}</td><td>${api.esc(p.cp)}</td><td>${api.esc(p.ville)}</td></tr>`).join('')
             || `<tr><td colspan="11" class="muted">${d.persons.length ? 'Aucun résultat.' : 'L’annuaire est vide. Ajoutez une personne ou importez un fichier Excel.'}</td></tr>`;
@@ -629,6 +708,7 @@ App.annuaire = (() => {
       api.$('#aPho', el).addEventListener('click', async () => { await photosMenu(); render(); });
       api.$('#aImp', el).addEventListener('click', () => importFlow(render));
       api.$('#aCmp', el).addEventListener('click', () => importFlow(render, 'compare'));
+      api.$('#aS21', el).addEventListener('click', () => s21Flow(render));
     }
     render();
   }

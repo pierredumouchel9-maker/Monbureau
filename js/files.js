@@ -30,6 +30,7 @@ App.files = (() => {
     }
     return {
       names: Object.keys(files),
+      async bytes(name) { const f = files[name]; if (!f) return null; return f.method === 0 ? f.data.slice() : inflateRaw(f.data); },
       async text(name) {
         const f = files[name]; if (!f) return null;
         const raw = f.method === 0 ? f.data : await inflateRaw(f.data);
@@ -316,6 +317,55 @@ App.files = (() => {
       rows.push([checked('Homme') ? 'Frère' : checked('Femme') ? 'Sœur' : '', nom, prenom, date(/^Date de naissance\s*:\s*/), date(/^Date de bapt[êe]me\s*:?\s*/), checked('Ancien') ? 'Ancien' : checked('Assistant') ? 'Assistant' : '', asm]);
     }
     return rows.length > 1 ? [{name: `${file.name.replace(/\.pdf$/i, '')} — fiches S-21 (${rows.length - 1} proclamateurs)`, rows}] : null;
+  }
+
+  /* ---------- Fiches S-21 « Activité du proclamateur » (une fiche par page) ----------
+     Formulaire officiel rempli : champs 900_1 nom, 900_2 naissance, 900_3/900_4 Homme/Femme, 900_5 baptême, 900_8/900_9 Ancien/Assistant,
+     900_10/900_11 pionnier permanent/spécial, 900_13 année de service, 901_x « a participé », 903_x pionnier auxiliaire, 904_x heures.
+     Fiche imprimée « à plat » : lecture du texte et des coches (✔, þ). */
+  async function openPdf(file) {
+    const base = document.baseURI;
+    const pdfjs = await import(new URL('lib/pdfjs/pdf.min.mjs', base).href);
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('lib/pdfjs/pdf.worker.min.mjs', base).href;
+    return pdfjs.getDocument({data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false}).promise;
+  }
+  async function readS21(file) {
+    const doc = await openPdf(file), cards = [];
+    const num = v => { const n = parseFloat(String(v || '').replace(',', '.')); return isNaN(n) ? 0 : n; };
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+      const f = {};
+      for (const a of await page.getAnnotations()) { const m = a.fieldName && /^(\d{3})_(\d+)_/.exec(a.fieldName); if (m) f[m[1] + '_' + m[2]] = a; }
+      const val = k => String(f[k]?.fieldValue ?? '').trim(), on = k => !!f[k] && !!f[k].fieldValue && f[k].fieldValue !== 'Off';
+      if (val('900_1')) {
+        const keys = Object.keys(f);
+        cards.push({full: val('900_1'), naissance: datesIn(val('900_2'))[0] || '', bapteme: datesIn(val('900_5'))[0] || '', homme: on('900_3'), femme: on('900_4'),
+          ancien: on('900_8'), assistant: on('900_9'), pp: on('900_10'), ps: on('900_11'), annee: (val('900_13').match(/\d{4}/) || [''])[0],
+          participe: keys.filter(k => k.startsWith('901_') && on(k)).length, pa: keys.filter(k => k.startsWith('903_') && on(k)).length,
+          heures: keys.filter(k => k.startsWith('904_')).reduce((t, k) => t + num(val(k)), 0), page: n, file: file.name});
+      }
+      page.cleanup();
+    }
+    if (!cards.length) {   // fiche « à plat » : texte
+      const pages = await pdfItems(doc);
+      pages.forEach((p, pi) => {
+        if (!p.some(i => /^Nom\s*:/.test(i.str.trim()))) return;
+        const lines = toLines(p);
+        const val = re => { const l = lines.find(l => re.test(l.text)); return l ? l.text.replace(re, '').trim() : ''; };
+        const checked = label => { for (const l of lines) { const i = l.items.findIndex(it => it.str.trim().startsWith(label)); if (i < 0) continue; const lab = l.items[i];
+          const box = l.items.slice(0, i).reverse().find(it => lab.x - (it.x + it.w) < 25);
+          if (box && /^[✔✓☑☒xX]$/.test(box.str.trim())) return true;
+          if (box && (/wingding|symbol/i.test(box.fname) || /^[þ¨]$/.test(box.str.trim()))) return box.str.trim() === 'þ';
+          // coche dessinée au-dessus ou en dessous de la ligne (formulaire imprimé)
+          if (p.some(it => /^[✔✓]$/.test(it.str.trim()) && Math.abs(it.y - lab.y) < lab.h * 1.2 && lab.x - it.x > 0 && lab.x - it.x < 25)) return true; }
+          return false; };
+        const full = val(/^Nom\s*:\s*/); if (!full) return;
+        cards.push({full, naissance: datesIn(val(/^Date de naissance\s*:\s*/))[0] || '', bapteme: datesIn(val(/^Date de bapt[êe]me\s*:?\s*/))[0] || '',
+          homme: checked('Homme'), femme: checked('Femme'), ancien: checked('Ancien'), assistant: checked('Assistant'), pp: checked('Pionnier permanent'), ps: checked('Pionnier spécial'),
+          annee: '', participe: null, pa: null, heures: null, page: pi + 1, file: file.name, asm: pdfTitle(pages)});
+      });
+    }
+    return cards.map(c => { const {nom, prenom} = splitNom(c.full); return {...c, nom, prenom}; }).filter(c => c.nom);
   }
 
   /* Liste « Famille | Adresse | Informations » (Cherbourg, Saint-Hilaire…) : une famille, son adresse, puis chaque membre avec téléphones et mail. */
@@ -675,5 +725,5 @@ App.files = (() => {
     return new Blob([...parts, ...central, new Uint8Array(end.buffer)], {type: 'application/zip'});
   }
 
-  return {readTable, readXlsx, readCsv, readPdf, readLayout, zip, unzip, telsIn, _tests: {readBlocs, nameIn, telsIn, splitAdresse, pdfItems}};
+  return {readTable, readXlsx, readCsv, readPdf, readLayout, readS21, zip, unzip, telsIn, _tests: {readBlocs, nameIn, telsIn, splitAdresse, pdfItems}};
 })();
