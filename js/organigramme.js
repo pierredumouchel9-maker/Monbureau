@@ -8,7 +8,10 @@
 App.organigramme = (() => {
   const N = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’`]/g, "'");
   const RULES = [
-    [/president/, null], [/equipe/, null], [/tresorier/, null], [/espaces? verts/, null], [/rapports?\b/, null],
+    // Association locale : président, secrétaire, trésorier, administrateurs
+    [/(president|secretai?r|tresori|administrat).*(association|alctj)|(association|alctj).*(president|secretai?r|tresori|administrat)/, 'ASSOC'],
+    [/tresori/, 'Trésorier (assoc.)'], [/administrat/, 'Administrateur (assoc.)'],
+    [/president/, null], [/equipe/, null], [/espaces? verts/, null], [/rapports?\b/, null],
     [/qualifie|classe complementaire/, null], [/estrade|\bscene/, 'Scène'], [/\bmicros?\b|perches?\b/, 'Micros'], [/bibliotheque|cyber|jw ?donate|publisher|\btps\b/, null],
     [/nettoyage/, null], [/supervise/, null], [/specifique/, null], [/association|alctj/, null],
     [/discours/, 'Discours publics'],
@@ -29,11 +32,13 @@ App.organigramme = (() => {
     [/coordinat/, 'CCA'],
     [/^groupes?\b/, 'Resp. de groupe']
   ];
+  const ASSOC = ['Président (assoc.)', 'Secrétaire (assoc.)', 'Trésorier (assoc.)', 'Administrateur (assoc.)'];
+  const assocOf = text => { const t = N(text); return /president/.test(t) ? ASSOC[0] : /secretai?r/.test(t) ? ASSOC[1] : /tresori/.test(t) ? ASSOC[2] : /administrat/.test(t) ? ASSOC[3] : null; };
   const ROLES = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Conseiller adj.', 'Aumônier', 'CLH', 'Comité de gestion',
-    'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Micros', 'Scène', 'Entretien', 'Resp. de groupe'];
-  const UNIQUE = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM'];
+    'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Micros', 'Scène', 'Entretien', 'Resp. de groupe', ...ASSOC];
+  const UNIQUE = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Président (assoc.)', 'Secrétaire (assoc.)', 'Trésorier (assoc.)'];
   // undefined : intitulé inconnu ; null : intitulé à ignorer ; sinon la responsabilité
-  function canon(text) { const t = N(text).replace(/[«»"():]/g, ' ').replace(/\s+/g, ' ').trim(); if (!t) return undefined; for (const [re, r] of RULES) if (re.test(t)) return r; return undefined; }
+  function canon(text) { const t = N(text).replace(/[«»"():]/g, ' ').replace(/\s+/g, ' ').trim(); if (!t) return undefined; for (const [re, r] of RULES) if (re.test(t)) return r === 'ASSOC' ? assocOf(t) : r; return /association|alctj/.test(t) ? null : undefined; }
   const GENERIC = /^(fonctions?|responsables?|adjoints?|resp\.?|noms?)$/;
   const genericTag = text => { const t = N(text).replace(/[^a-z. ]/g, '').trim(); return GENERIC.test(t) ? (/^adj/.test(t) ? 'adj' : /^resp/.test(t) ? 'resp' : 'none') : null; };
   const TAG_CELL = /^\(\s*(adj|resp)[a-z]*\.?\s*\)$/i;
@@ -120,7 +125,9 @@ App.organigramme = (() => {
         }
         return txt; };
       const leftOf = (c, x) => cells.filter(o => o !== c && sameLine(o, c) && o.x + o.w <= x + 2).sort((a, b) => b.x - a.x);
-      const roleOfLabel = L => { let r = canon(L.text); if (r !== undefined) return r; r = canon(stacked(L)); if (r !== undefined) return r;
+      // intitulé placé sous un titre « Association » / « Bureau de l'association » : rôle de l'association
+      const assocAbove = c => cells.filter(o => o !== c && labelish(o) && o.y < c.y && c.y - o.y < 160 && overlaps(o, c.x, c.x + c.w)).sort((a, b) => b.y - a.y).slice(0, 4).some(o => /association|alctj/.test(N(o.text)));
+      const roleOfLabel = L => { if (assocOf(L.text) && assocAbove(L)) return assocOf(L.text); let r = canon(L.text); if (r !== undefined) return r; r = canon(stacked(L)); if (r !== undefined) return r;
         const rowHead = leftOf(L, L.x).find(labelish); return rowHead ? canon(rowHead.text) : undefined; };
 
       for (const c of cells) for (const nm of c.names) {
@@ -133,8 +140,10 @@ App.organigramme = (() => {
         let role, label = null;
         if (inl && !c.names.some(o => o.end <= nm.start && o.end > inl.index)) {
           role = canon(inl[1]); label = {key: pg + ':' + c.i + ':' + inl[1], y: c.y, x: c.x};
-          const above = cells.filter(o => labelish(o) && o.y < c.y && overlaps(o, c.x, c.x + c.w)).sort((a, b) => b.y - a.y)[0];
-          if (above && canon(stacked(above)) === null) role = null;     // ex. bureau de l'association locale
+          // sous le titre « Bureau de l'association locale » : président, secrétaire, trésorier de l'association
+          if (assocOf(inl[1]) && assocAbove(c)) role = assocOf(inl[1]);
+          else { const above = cells.filter(o => labelish(o) && o.y < c.y && overlaps(o, c.x, c.x + c.w)).sort((a, b) => b.y - a.y)[0];
+            if (above && canon(stacked(above)) === null) role = null; }
         } else {
           // à gauche sur la même ligne (tableaux)
           const L = leftOf(c, nx).find(o => !isTag(o) && !o.names.length);
@@ -175,7 +184,7 @@ App.organigramme = (() => {
       const tagged = g.some(r => r.tag);
       g.forEach((r, i) => {
         if (tagged) { if (r.tag) out.push({...r, adj: r.tag === 'adj'}); else if (i === 0) out.push({...r, adj: false}); }
-        else if (g.length <= 3) out.push({...r, adj: false});
+        else if (g.length <= 3 || ASSOC.includes(r.role)) out.push({...r, adj: false});
       });
     }
     // Par frère

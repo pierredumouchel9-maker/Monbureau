@@ -687,7 +687,7 @@ App.annuaire = (() => {
         const draw = () => {
           const nq = api.norm(q);
           // statut de pionnier : le plus récent noté dans l'analyse de la circonscription
-          const circ = api.moduleData('circonscription', {cycles: [], suivi: {}}), cyc = [...(circ.cycles || [])].sort((a, b) => b.code.localeCompare(a.code));
+          const circ = api.moduleData('circonscription', {cycles: [], assemblees: [], fiches: {}}), cyc = [...(circ.cycles || [])].sort((a, b) => b.code.localeCompare(a.code));
           // à défaut, le statut de la fiche (lu sur les S-21)
           statutOf = p => { for (const c of cyc) { const e = circ.suivi?.[c.id]?.[p.id]; if (e && e.statut !== undefined) return e.statut || ''; } return ['PNB', 'PP', 'PS'].includes(p.statut) ? p.statut : ''; };
           const okF = p => !ffct ? true : ffct === 'aucune' ? !p.fonction : ffct.startsWith('f:') ? p.fonction === ffct.slice(2)

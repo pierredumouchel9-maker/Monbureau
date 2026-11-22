@@ -35,7 +35,8 @@ App.circo = (() => {
   ];
 
   const hn = s => api.norm(s).replace(/[.@]/g, ' ').replace(/\s+/g, ' ').trim();
-  const store = () => api.moduleData('circonscription', {cycles: [], assemblees: [], fiches: {}});
+  // champs toujours présents, même si un autre module a créé la zone de données avant la Circonscription
+  const store = () => { const S = api.moduleData('circonscription', {cycles: [], assemblees: [], fiches: {}}); S.cycles ??= []; S.assemblees ??= []; S.fiches ??= {}; return S; };
   const n = v => (v === '' || v === null || v === undefined || isNaN(Number(v))) ? null : Number(v);
   const fmt = v => v === null || v === undefined ? '' : Number.isInteger(v) ? String(v) : v.toFixed(1).replace('.', ',');
   const pct = (a, b) => (a === null || !b) ? '' : Math.round(a / b * 100) + ' %';
@@ -632,7 +633,7 @@ App.circo = (() => {
       if (eb(r)) b.push(`${eb(r)} EB`);
       return b; };
     // Responsabilités abrégées pour le bilan PDF, dans l'ordre de la liste
-    const ABR = {'Comité de gestion': 'CG', 'Resp. Prédication': 'Prédication', 'Discours publics': 'DP', 'Audio/vidéo': 'Audio/Vidéo'};
+    const ABR = {'Comité de gestion': 'CG', 'Resp. Prédication': 'Prédication', 'Discours publics': 'DP', 'Audio/vidéo': 'Audio/Vidéo', 'Président (assoc.)': 'Prés. assoc.', 'Secrétaire (assoc.)': 'Secr. assoc.', 'Trésorier (assoc.)': 'Trés. assoc.', 'Administrateur (assoc.)': 'Admin. assoc.'};
     const respAbr = p => [...(p.resp || [])].sort((a, b) => ((RESPS.indexOf(a.replace(/ adj\.$/, '')) + 1) || 99) - ((RESPS.indexOf(b.replace(/ adj\.$/, '')) + 1) || 99))
       .map(x => { const adj = / adj\.$/.test(x), b = x.replace(/ adj\.$/, ''); return (ABR[b] || b) + (adj ? ' adj.' : ''); }).join(', ');
     const detail = (r, nomme) => {
@@ -932,6 +933,18 @@ App.circo = (() => {
       const row = autres.slice(i, i + 6).map((x, k) => box(slotX(k), top, sw, LBL[x.r] || x.r, COL.gris, x));
       top = Math.max(...row.map(v => v.bottom)) + 12;
     }
+    // Association locale : président, secrétaire, trésorier, administrateurs
+    { const who = r => mem.filter(p => (p.resp || []).includes(r)).map(nm), pr = who('Président (assoc.)'), se = who('Secrétaire (assoc.)'), tr = who('Trésorier (assoc.)'), ad = who('Administrateur (assoc.)');
+      const parts = [['Président', pr], ['Secrétaire', se], ['Trésorier', tr]].map(([l, v]) => `${l} : ${v.length ? v.join(', ') : 'non renseigné'}`);
+      if (ad.length) parts.push(`Administrateur${ad.length > 1 ? 's' : ''} : ${ad.join(', ')}`);
+      const aw = W - 2 * M, lines = wrapT(parts.join('   ·   '), R, 8.5, aw - 120), ah = Math.max(18, 6 + lines.length * 11);
+      if (top + ah > H - 22) top = H - 22 - ah;   // reste sur la page
+      const teal = rgb(.05, .45, .48);
+      page.drawRectangle({x: M, y: Y(top + ah), width: 110, height: ah, color: teal});
+      page.drawText(T('ASSOCIATION'), {x: M + 55 - width('ASSOCIATION', B, 8.5) / 2, y: Y(top + ah / 2 + 3), size: 8.5, font: B, color: white});
+      page.drawRectangle({x: M + 110, y: Y(top + ah), width: aw - 110, height: ah, color: white, borderColor: teal, borderWidth: 1});
+      lines.forEach((l, i) => page.drawText(l, {x: M + 118, y: Y(top + 6 + (i + 1) * 11 - 3.5 + (ah - 6 - lines.length * 11) / 2), size: 8.5, font: R, color: ink}));
+      top += ah + 12; }
     page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
   }
   function assembleeView(el, name) {
@@ -1069,7 +1082,8 @@ App.circo = (() => {
   }
   const HEURES_MOIS = 50;
   const RESPS = ['CCA', 'Secrétaire', 'Resp. Prédication', 'TG', 'VCM', 'Conseiller adj.', 'Resp. de groupe', 'Aumônier', 'CLH', 'LDC', 'Télévolontaire',
-    'Comité de gestion', 'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Micros', 'Scène', 'Entretien'];
+    'Comité de gestion', 'Comptes', 'Territoires', 'Publications', 'Discours publics', 'Accueil', 'Audio/vidéo', 'Micros', 'Scène', 'Entretien',
+    'Président (assoc.)', 'Secrétaire (assoc.)', 'Trésorier (assoc.)', 'Administrateur (assoc.)'];
   const suivi = c => (store().suivi ??= {})[c.id] ??= {};
   // Mois du cycle : A = septembre → février, B = mars → août
   function cycleStart(code) { const y = Number(code.slice(0, 4)); return /A$/.test(code) ? new Date(y - 1, 8, 1) : new Date(y, 2, 1); }
