@@ -712,45 +712,60 @@ App.circo = (() => {
         y -= bh + gap;
       }
 
-      // Frères nommés et pionniers : 4 colonnes
+      // Frères nommés et pionniers : 4 colonnes. Sans PS, les PP occupent les deux dernières colonnes.
       section('Frères nommés et pionniers');
       const cw = (W - 2 * M - 3 * 10) / 4, lh = S(11.5), fs = S(9.5), fd = S(8.3);
-      groups.forEach(([t, l], gi) => txt(`${t} (${l.length})`, M + gi * (cw + 10), y - S(10), {bold: true, size: S(10)}));
+      const cols4 = groups.map(([, l, nomme]) => blocksOf(l, nomme)), psEmpty = !cols4[3].length;
+      groups.forEach(([t, l], gi) => { if (psEmpty && gi === 3) return; txt(`${t} (${l.length})${psEmpty && gi === 2 ? ' · PS : aucun' : ''}`, M + gi * (cw + 10), y - S(10), {bold: true, size: S(10)}); });
       y -= S(13);
-      const cols4 = groups.map(([, l, nomme]) => blocksOf(l, nomme));
       // Photos (trombinoscope) alignées à gauche ; le frère et son épouse partagent le même bloc
       const all = cols4.flat(), withPhoto = all.some(bk => api.photos.get(bk.pid) || (bk.sub && api.photos.get(bk.sub.pid)));
       const twoPh = withPhoto && all.some(bk => bk.sub && api.photos.get(bk.sub.pid));
       const phS = S(24), imgs = {};
       const photoOf = async pid => { const src = api.photos.get(pid); if (!src) return null; return imgs[pid] ??= await doc.embedJpg(Uint8Array.from(atob(src.split(',')[1]), ch => ch.charCodeAt(0))); };
-      const txOff = withPhoto ? (twoPh ? 2 * phS + S(6) : phS + S(4)) : 0, rl = S(9);
-      for (const bk of cols4.flat()) bk.respL = bk.resp ? wrap(bk.resp, cw - txOff - 4, fd) : [];
-      const hOf = bk => { if (!bk) return 0; const n = bk.respL.length;
+      const txOff = withPhoto ? (twoPh ? 2 * phS + S(6) : phS + S(4)) : 0, rl = S(9), wmax = cw - txOff - 2;
+      // Détail (heures, %, EB…) à côté du nom s'il tient, sinon sur la ligne suivante : jamais coupé
+      for (const bk of all) {
+        bk.respL = bk.resp ? wrap(bk.resp, wmax - 2, fd) : [];
+        const nameW = B.widthOfTextAtSize(fit(bk.name, B, fs, wmax), fs);
+        bk.inline = !bk.d || R.widthOfTextAtSize(T(bk.d), fd) <= wmax - nameW - 5;
+        bk.dL = bk.inline ? [] : wrap(bk.d, wmax - 2, fd);
+        bk.subDL = bk.sub && bk.sub.d && R.widthOfTextAtSize(T(bk.sub.d), fd) > wmax - R.widthOfTextAtSize(T(bk.sub.name), fd) - 5 ? wrap(bk.sub.d, wmax - 2, fd) : [];
+      }
+      const hOf = bk => { if (!bk) return 0; const n = bk.respL.length + bk.dL.length + bk.subDL.length;
         if (!n) return withPhoto ? Math.max(phS, bk.sub ? S(23) : 0) + S(3) : (bk.sub ? S(22) : lh);
         const content = S(12) + n * rl + (bk.sub ? S(10) : 0); return (withPhoto ? Math.max(phS, content) : content) + S(3); };
-      // Chaque colonne se remplit indépendamment (pas de ligne vide quand une colonne a des blocs plus hauts)
-      const colH = cols4.map(l => l.reduce((t, bk) => t + hOf(bk), 0)), totH = Math.max(lh, ...colH);
+      // Colonnes à dessiner (PP coupés en deux moitiés de même hauteur quand il n'y a pas de PS)
+      const lay = [0, 1].map(gi => ({x: M + gi * (cw + 10), list: cols4[gi]}));
+      if (psEmpty) {
+        const pp = cols4[2], tot = pp.reduce((t, bk) => t + hOf(bk), 0); let acc = 0, cut = pp.length;
+        for (let i2 = 0; i2 < pp.length; i2++) { if (acc + hOf(pp[i2]) / 2 > tot / 2) { cut = i2; break; } acc += hOf(pp[i2]); }
+        lay.push({x: M + 2 * (cw + 10), list: pp.slice(0, cut)}, {x: M + 3 * (cw + 10), list: pp.slice(cut)});
+      } else lay.push({x: M + 2 * (cw + 10), list: cols4[2]}, {x: M + 3 * (cw + 10), list: cols4[3]});
+      const colH = lay.map(c2 => c2.list.reduce((t, bk) => t + hOf(bk), 0)), totH = Math.max(lh, ...colH);
       need(totH);
       const y0 = y;
-      for (let gi = 0; gi < cols4.length; gi++) {
+      for (const col of lay) {
         let yc = y0;
-        for (const bk of cols4[gi]) {
-          const hR = hOf(bk), x0 = M + gi * (cw + 10);
+        for (const bk of col.list) {
+          const hR = hOf(bk), x0 = col.x;
           if (bk.hi) page.drawRectangle({x: x0 - 2, y: yc - hR, width: cw + 4, height: hR, color: jaune2});
           else if (bk.bi % 2 === 0) page.drawRectangle({x: x0 - 2, y: yc - hR, width: cw + 4, height: hR, color: ciel});
           let tx = x0;
           if (withPhoto) {
             const im = await photoOf(bk.pid); if (im) medal(page, im, x0, yc - phS - S(1.5), phS);
             if (twoPh) { const im2 = bk.sub ? await photoOf(bk.sub.pid) : null; if (im2) medal(page, im2, x0 + phS + S(2), yc - phS - S(1.5), phS); }
-            tx = x0 + (twoPh ? 2 * phS + S(6) : phS + S(4));
+            tx = x0 + txOff;
           }
-          const wmax = cw - (tx - x0);
           const line = (t, d, yb, bold) => { const f1 = bold ? B : R, s1 = bold ? fs : fd; const n1 = fit(t, f1, s1, d ? wmax * .6 : wmax), w1 = f1.widthOfTextAtSize(n1, s1);
             txt(n1, tx, yb, {size: s1, bold, color: bold ? ink : mute}); if (d) txt(fit(d, R, fd, wmax - w1 - 5), tx + w1 + 4, yb, {size: fd, color: mute}); };
-          if (bk.respL.length) {
-            line(bk.name, bk.d, yc - S(10), true); let yb = yc - S(10);
+          const extraL = bk.dL.length + bk.respL.length + bk.subDL.length;
+          if (extraL) {
+            if (bk.inline) line(bk.name, bk.d, yc - S(10), true); else txt(fit(bk.name, B, fs, wmax), tx, yc - S(10), {size: fs, bold: true});
+            let yb = yc - S(10);
+            for (const l of bk.dL) { yb -= rl; txt(l, tx, yb, {size: fd, color: mute}); }
             for (const l of bk.respL) { yb -= rl; txt(l, tx, yb, {size: fd, color: blue}); }
-            if (bk.sub) line(bk.sub.name, bk.sub.d, yb - S(10), false);
+            if (bk.sub) { yb -= S(10); line(bk.sub.name, bk.subDL.length ? '' : bk.sub.d, yb, false); for (const l of bk.subDL) { yb -= rl; txt(l, tx, yb, {size: fd, color: mute}); } }
           } else if (bk.sub) { line(bk.name, bk.d, yc - S(10), true); line(bk.sub.name, bk.sub.d, yc - S(20), false); }
           else line(bk.name, bk.d, withPhoto ? yc - hR / 2 - S(3) : yc - S(9), true);
           yc -= hR;
