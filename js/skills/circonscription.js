@@ -715,9 +715,8 @@ App.circo = (() => {
       // Frères nommés et pionniers : 4 colonnes. Sans PS, les PP occupent les deux dernières colonnes.
       section('Frères nommés et pionniers');
       const cw = (W - 2 * M - 3 * 10) / 4, lh = S(11.5), fs = S(9.5), fd = S(8.3);
-      const cols4 = groups.map(([, l, nomme]) => blocksOf(l, nomme)), psEmpty = !cols4[3].length;
-      groups.forEach(([t, l], gi) => { if (psEmpty && gi === 3) return; txt(`${t} (${l.length})${psEmpty && gi === 2 ? ' · PS : aucun' : ''}`, M + gi * (cw + 10), y - S(10), {bold: true, size: S(10)}); });
-      y -= S(13);
+      const cols4 = groups.map(([, l, nomme]) => blocksOf(l, nomme));
+      const hdrY = y; y -= S(13);   // titres des colonnes écrits plus bas, une fois la mise en page connue
       // Photos (trombinoscope) alignées à gauche ; le frère et son épouse partagent le même bloc
       const all = cols4.flat(), withPhoto = all.some(bk => api.photos.get(bk.pid) || (bk.sub && api.photos.get(bk.sub.pid)));
       const twoPh = withPhoto && all.some(bk => bk.sub && api.photos.get(bk.sub.pid));
@@ -735,14 +734,21 @@ App.circo = (() => {
       const hOf = bk => { if (!bk) return 0; const n = bk.respL.length + bk.dL.length + bk.subDL.length;
         if (!n) return withPhoto ? Math.max(phS, bk.sub ? S(23) : 0) + S(3) : (bk.sub ? S(22) : lh);
         const content = S(12) + n * rl + (bk.sub ? S(10) : 0); return (withPhoto ? Math.max(phS, content) : content) + S(3); };
-      // Colonnes à dessiner (PP coupés en deux moitiés de même hauteur quand il n'y a pas de PS)
+      // Colonnes à dessiner. Sans PS, et seulement si la liste des PP serait la plus longue de la page,
+      // les PP continuent dans la 4e colonne, titrée « PP (suite) » pour ne pas la confondre avec les PS.
       const lay = [0, 1].map(gi => ({x: M + gi * (cw + 10), list: cols4[gi]}));
-      if (psEmpty) {
+      const hList = l => l.reduce((t, bk) => t + hOf(bk), 0);
+      const split = !cols4[3].length && hList(cols4[2]) > Math.max(hList(cols4[0]), hList(cols4[1])) && cols4[2].length > 3;
+      const head = (t, gi, sub) => { txt(t, M + gi * (cw + 10), hdrY - S(10), {bold: true, size: S(10)}); if (sub) txt(sub, M + gi * (cw + 10) + B.widthOfTextAtSize(T(t), S(10)) + 5, hdrY - S(10), {size: S(8.5), color: mute}); };
+      head(`${groups[0][0]} (${groups[0][1].length})`, 0); head(`${groups[1][0]} (${groups[1][1].length})`, 1);
+      if (split) { head(`${groups[2][0]} (${groups[2][1].length})`, 2, 'PS : aucun'); head('Pionniers permanents (suite)', 3); }
+      else { head(`${groups[2][0]} (${groups[2][1].length})`, 2); head(`${groups[3][0]} (${groups[3][1].length})`, 3, groups[3][1].length ? '' : 'aucun'); }
+      if (split) {
         const pp = cols4[2], tot = pp.reduce((t, bk) => t + hOf(bk), 0); let acc = 0, cut = pp.length;
         for (let i2 = 0; i2 < pp.length; i2++) { if (acc + hOf(pp[i2]) / 2 > tot / 2) { cut = i2; break; } acc += hOf(pp[i2]); }
         lay.push({x: M + 2 * (cw + 10), list: pp.slice(0, cut)}, {x: M + 3 * (cw + 10), list: pp.slice(cut)});
       } else lay.push({x: M + 2 * (cw + 10), list: cols4[2]}, {x: M + 3 * (cw + 10), list: cols4[3]});
-      const colH = lay.map(c2 => c2.list.reduce((t, bk) => t + hOf(bk), 0)), totH = Math.max(lh, ...colH);
+      const colH = lay.map(c2 => hList(c2.list)), totH = Math.max(lh, ...colH);
       need(totH);
       const y0 = y;
       for (const col of lay) {
@@ -757,7 +763,7 @@ App.circo = (() => {
             if (twoPh) { const im2 = bk.sub ? await photoOf(bk.sub.pid) : null; if (im2) medal(page, im2, x0 + phS + S(2), yc - phS - S(1.5), phS); }
             tx = x0 + txOff;
           }
-          const line = (t, d, yb, bold) => { const f1 = bold ? B : R, s1 = bold ? fs : fd; const n1 = fit(t, f1, s1, d ? wmax * .6 : wmax), w1 = f1.widthOfTextAtSize(n1, s1);
+          const line = (t, d, yb, bold) => { const f1 = bold ? B : R, s1 = bold ? fs : fd; const n1 = fit(t, f1, s1, d ? Math.max(wmax * .6, wmax - R.widthOfTextAtSize(T(d), fd) - 5) : wmax), w1 = f1.widthOfTextAtSize(n1, s1);
             txt(n1, tx, yb, {size: s1, bold, color: bold ? ink : mute}); if (d) txt(fit(d, R, fd, wmax - w1 - 5), tx + w1 + 4, yb, {size: fd, color: mute}); };
           const extraL = bk.dL.length + bk.respL.length + bk.subDL.length;
           if (extraL) {
