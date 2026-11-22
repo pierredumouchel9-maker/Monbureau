@@ -12,6 +12,9 @@ App.annuaire = (() => {
   const fullName = p => [p.prenom, (p.nom || '').toUpperCase()].filter(Boolean).join(' ');
   const emailOk = e => !e || /^[^\s@,;]+@[^\s@,;]+\.[a-z]{2,}$/i.test(e.trim());
   const FONCTIONS = ['Ancien', 'Assistant'];
+  // Comité de service de chaque assemblée : coordinateur du collège des anciens, secrétaire, responsable de prédication
+  const COMITE = ['CCA', 'Secrétaire', 'Resp. Prédication'], COM_LIB = {'CCA': 'CCA', 'Secrétaire': 'secrétaire', 'Resp. Prédication': 'resp. prédication'};
+  const comRang = p => { const i = COMITE.findIndex(r => (p.resp || []).includes(r)); return i < 0 ? 9 : i; };
   // Statut lu sur les fiches S-21 (PNB : date de naissance sans date de baptême ; PP, PS : cases cochées)
   const STATUTS = [['', 'Proclamateur'], ['PNB', 'PNB (non baptisé)'], ['PP', 'Pionnier permanent'], ['PS', 'Pionnier spécial']];
   const fct = v => { const n = api.norm(v); if (/^(a|anc|ancien|ancienne?s?)$/.test(n)) return 'Ancien'; if (/^(ass|assist|assistant|assistants|am|sm|assistant ministeriel|serviteur ministeriel)$/.test(n)) return 'Assistant'; return ''; };
@@ -667,8 +670,9 @@ App.annuaire = (() => {
           <select id="aFct" style="max-width:220px"><option value="">Tous</option>
             <optgroup label="Fonction">${FONCTIONS.map(v => `<option value="f:${v}" ${ffct === 'f:' + v ? 'selected' : ''}>${v}s</option>`).join('')}<option value="aucune" ${ffct === 'aucune' ? 'selected' : ''}>Sans fonction</option></optgroup>
             <optgroup label="Statut">${['PNB', 'PP', 'PS'].map(v => `<option value="s:${v}" ${ffct === 's:' + v ? 'selected' : ''}>${v === 'PP' ? 'PP (pionniers permanents)' : v === 'PS' ? 'PS (pionniers spéciaux)' : 'PNB (non baptisés)'}</option>`).join('')}</optgroup>
-            <optgroup label="Responsabilités">${['CCA', 'Secrétaire', 'Resp. Prédication', 'CLH'].map(v => `<option value="r:${v}" ${ffct === 'r:' + v ? 'selected' : ''}>${v}</option>`).join('')}</optgroup></select>
+            <optgroup label="Responsabilités"><option value="comite" ${ffct === 'comite' ? 'selected' : ''}>Comité de service (CCA, secrétaire, resp. prédication)</option>${['CCA', 'Secrétaire', 'Resp. Prédication', 'CLH'].map(v => `<option value="r:${v}" ${ffct === 'r:' + v ? 'selected' : ''}>${v}</option>`).join('')}</optgroup></select>
           <span class="small muted" id="aCount"></span></div>
+          <div id="aComite" style="margin-bottom:10px"></div>
           <div class="table-wrap"><table class="list"><thead><tr><th style="width:48px"></th><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Baptême</th><th>Fonction</th><th>Portable</th><th>Mail</th><th>Adresse</th><th>CP</th><th>Ville</th></tr></thead><tbody id="aRows"></tbody></table></div>`;
         // Photo (ou initiales) en tête de ligne
         const avatar = p => { const ph = api.photos.get(p.id);
@@ -682,13 +686,18 @@ App.annuaire = (() => {
           // à défaut, le statut de la fiche (lu sur les S-21)
           statutOf = p => { for (const c of cyc) { const e = circ.suivi?.[c.id]?.[p.id]; if (e && e.statut !== undefined) return e.statut || ''; } return ['PNB', 'PP', 'PS'].includes(p.statut) ? p.statut : ''; };
           const okF = p => !ffct ? true : ffct === 'aucune' ? !p.fonction : ffct.startsWith('f:') ? p.fonction === ffct.slice(2)
-            : ffct.startsWith('s:') ? statutOf(p) === ffct.slice(2) : ffct.startsWith('r:') ? (p.resp || []).includes(ffct.slice(2)) : true;
+            : ffct.startsWith('s:') ? statutOf(p) === ffct.slice(2) : ffct.startsWith('r:') ? (p.resp || []).includes(ffct.slice(2)) : ffct === 'comite' ? COMITE.some(r => (p.resp || []).includes(r)) : true;
           const rows = d.persons.filter(p => (!filt || api.norm(p.assemblee) === api.norm(filt)) && okF(p) && (!nq || api.norm(Object.values(p).join(' ')).includes(nq)))
-            .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr') || (a.prenom || '').localeCompare(b.prenom || '', 'fr'));
+            .sort((a, b) => (ffct === 'comite' ? (a.assemblee || '').localeCompare(b.assemblee || '', 'fr') || comRang(a) - comRang(b) : 0) || (a.nom || '').localeCompare(b.nom || '', 'fr') || (a.prenom || '').localeCompare(b.prenom || '', 'fr'));
           const cnt = api.$('#aCount', el); if (cnt) cnt.textContent = `${rows.length} personne(s)`;
+          // Comité de service : assemblée par assemblée, les rôles qui manquent
+          const cw = api.$('#aComite', el);
+          if (cw) { const asms = (filt ? [filt] : d.congregations.map(c => c.nom)).filter(Boolean);
+            const manques = asms.map(a => [a, COMITE.filter(r => !d.persons.some(p => api.norm(p.assemblee) === api.norm(a) && (p.resp || []).includes(r)))]).filter(x => x[1].length);
+            cw.innerHTML = ffct === 'comite' && manques.length ? `<div class="notice small">Comité de service incomplet : ${manques.map(([a, m]) => `<strong>${api.esc(a)}</strong> (${m.map(r => COM_LIB[r]).join(', ')} non renseigné${m.length > 1 ? 's' : ''})`).join(' · ')}.<br><span class="muted">Les responsabilités se renseignent dans la fiche de chaque frère, ou d’après l’organigramme de l’assemblée (Circonscription).</span></div>` : ''; }
           const age = iso => { const n = yearsSince(iso); return iso ? `${fmtDate(iso)}<div class="small muted">${n} an${n > 1 ? 's' : ''}</div>` : ''; };
           api.$('#aRows', el).innerHTML = rows.map(p => `<tr class="click" data-id="${p.id}"><td style="padding:4px 6px">${avatar(p)}</td><td><strong>${api.esc((p.nom || '').toUpperCase())}</strong>${p.assemblee ? `<div class="small muted">${api.esc(p.assemblee)}</div>` : ''}</td>
-            <td>${api.esc(p.prenom)}</td><td>${age(p.naissance)}</td><td>${age(p.bapteme)}</td><td>${p.fonction ? `<span class="pill ${p.fonction === 'Ancien' ? 'ok' : ''}">${api.esc(p.fonction)}</span>` : ''}${statutOf(p) ? ` <span class="pill ${statutOf(p) === 'PNB' ? 'warn' : ''}">${api.esc(statutOf(p))}</span>` : ''}</td><td style="white-space:nowrap">${api.esc(p.telephone)}${p.fixe ? `<div class="small muted">${api.esc(p.fixe)}</div>` : ''}</td>
+            <td>${api.esc(p.prenom)}</td><td>${age(p.naissance)}</td><td>${age(p.bapteme)}</td><td>${p.fonction ? `<span class="pill ${p.fonction === 'Ancien' ? 'ok' : ''}">${api.esc(p.fonction)}</span>` : ''}${statutOf(p) ? ` <span class="pill ${statutOf(p) === 'PNB' ? 'warn' : ''}">${api.esc(statutOf(p))}</span>` : ''}${ffct === 'comite' ? COMITE.filter(r => (p.resp || []).includes(r)).map(r => ` <span class="pill ok">${api.esc(r)}</span>`).join('') : ''}</td><td style="white-space:nowrap">${api.esc(p.telephone)}${p.fixe ? `<div class="small muted">${api.esc(p.fixe)}</div>` : ''}</td>
             <td>${p.email ? `<a href="mailto:${api.esc(p.email)}" onclick="event.stopPropagation()">${api.esc(p.email)}</a>` : ''}${emailOk(p.email) ? '' : ' <span class="pill warn">à vérifier</span>'}</td>
             <td>${api.esc(p.adresse)}</td><td>${api.esc(p.cp)}</td><td>${api.esc(p.ville)}</td></tr>`).join('')
             || `<tr><td colspan="11" class="muted">${d.persons.length ? 'Aucun résultat.' : 'L’annuaire est vide. Ajoutez une personne ou importez un fichier Excel.'}</td></tr>`;
