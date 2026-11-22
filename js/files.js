@@ -339,7 +339,7 @@ App.files = (() => {
       const val = k => String(f[k]?.fieldValue ?? '').trim(), on = k => !!f[k] && !!f[k].fieldValue && f[k].fieldValue !== 'Off';
       if (val('900_1')) {
         const keys = Object.keys(f);
-        cards.push({full: val('900_1'), naissance: datesIn(val('900_2'))[0] || '', bapteme: datesIn(val('900_5'))[0] || '', homme: on('900_3'), femme: on('900_4'),
+        cards.push({full: val('900_1'), naissance: datesIn(val('900_2'))[0] || '', bapteme: datesIn(val('900_5'))[0] || '', naisBrut: val('900_2'), bapBrut: val('900_5'), homme: on('900_3'), femme: on('900_4'),
           ancien: on('900_8'), assistant: on('900_9'), pp: on('900_10'), ps: on('900_11'), annee: (val('900_13').match(/\d{4}/) || [''])[0],
           participe: keys.filter(k => k.startsWith('901_') && on(k)).length, pa: keys.filter(k => k.startsWith('903_') && on(k)).length,
           heures: keys.filter(k => k.startsWith('904_')).reduce((t, k) => t + num(val(k)), 0), page: n, file: file.name});
@@ -360,7 +360,8 @@ App.files = (() => {
           if (p.some(it => /^[✔✓]$/.test(it.str.trim()) && Math.abs(it.y - lab.y) < lab.h * 1.2 && lab.x - it.x > 0 && lab.x - it.x < 25)) return true; }
           return false; };
         const full = val(/^Nom\s*:\s*/); if (!full) return;
-        cards.push({full, naissance: datesIn(val(/^Date de naissance\s*:\s*/))[0] || '', bapteme: datesIn(val(/^Date de bapt[êe]me\s*:?\s*/))[0] || '',
+        const nB = val(/^Date de naissance\s*:\s*/), bB = val(/^Date de bapt[êe]me\s*:?\s*/);
+        cards.push({full, naissance: datesIn(nB)[0] || '', bapteme: datesIn(bB)[0] || '', naisBrut: nB, bapBrut: bB,
           homme: checked('Homme'), femme: checked('Femme'), ancien: checked('Ancien'), assistant: checked('Assistant'), pp: checked('Pionnier permanent'), ps: checked('Pionnier spécial'),
           annee: '', participe: null, pa: null, heures: null, page: pi + 1, file: file.name, asm: pdfTitle(pages)});
       });
@@ -405,7 +406,14 @@ App.files = (() => {
 
 
   const DATE_RE = /(\d{1,2})[\/.\- ](\d{1,2})[\/.\- ](\d{4})/g;
-  const datesIn = t => [...String(t || '').matchAll(DATE_RE)].map(m => `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/${m[3]}`);
+  // Dates en chiffres ou avec le mois en lettres : « 02/05/1957 », « 2 mai 1957 », « 1er janv. 2000 », « 02-MAI-57 »
+  const moisNum = w => { w = String(w || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\.$/, '');
+    for (const [p, n] of [['janv', 1], ['jan', 1], ['fev', 2], ['mar', 3], ['avr', 4], ['mai', 5], ['juin', 6], ['juil', 7], ['aou', 8], ['sep', 9], ['oct', 10], ['nov', 11], ['dec', 12]]) if (w.startsWith(p) && w.length <= 9) return n;
+    return 0; };
+  const an4 = y => { y = Number(y); return y < 100 ? y + (y > new Date().getFullYear() % 100 ? 1900 : 2000) : y; };
+  const DATE_ANY = /(\d{1,2})(?:er)?[\/.\- ]+(?:(\d{1,2})|([A-Za-zÀ-ÿ]{3,9})\.?)[\/.\- ]+(\d{4}|\d{2})(?!\d)/g;
+  const datesIn = t => [...String(t || '').matchAll(DATE_ANY)].map(m => { const d = Number(m[1]), mo = m[2] ? Number(m[2]) : moisNum(m[3]);
+    return mo >= 1 && mo <= 12 && d >= 1 && d <= 31 ? `${String(d).padStart(2, '0')}/${String(mo).padStart(2, '0')}/${an4(m[4])}` : null; }).filter(Boolean);
   const pickMail = t => (String(t || '').replace(/\s+(?=\S*@)|(?<=@\S*)\s+(?=[\w.-]+\.\w{2,}\b)/g, '').match(/[\w.+\-]+@[\w\-]+(\.[\w\-]+)+/) || [''])[0];
 
   /* Fiches à étiquettes (Villedieu) : « Nom, Prénom » puis « ADRESSE: … », « EMAIL: … », « TÉLÉPHONE MOBILE: … ». */
@@ -725,5 +733,5 @@ App.files = (() => {
     return new Blob([...parts, ...central, new Uint8Array(end.buffer)], {type: 'application/zip'});
   }
 
-  return {readTable, readXlsx, readCsv, readPdf, readLayout, readS21, zip, unzip, telsIn, _tests: {readBlocs, nameIn, telsIn, splitAdresse, pdfItems}};
+  return {readTable, readXlsx, readCsv, readPdf, readLayout, readS21, zip, unzip, telsIn, datesIn, _tests: {readBlocs, nameIn, telsIn, splitAdresse, pdfItems}};
 })();

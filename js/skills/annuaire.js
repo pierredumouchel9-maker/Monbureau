@@ -39,7 +39,8 @@ App.annuaire = (() => {
     const t = String(v).trim(); let m;
     if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t))) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
     if ((m = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/.exec(t))) { let y = Number(m[3]); if (y < 100) y += y > (new Date().getFullYear() % 100) ? 1900 : 2000; return `${y}-${pad(m[2])}-${pad(m[1])}`; }
-    if ((m = /^(\d{1,2})(?:er)?\s+([a-zéû]+)\.?\s+(\d{4})$/i.exec(t))) { const i = MOIS.findIndex(x => x.startsWith(api.norm(m[2]).slice(0, 3))); if (i >= 0) return `${m[3]}-${pad(i + 1)}-${pad(m[1])}`; }
+    // mois en lettres (« 2 mai 1957 », « 1er janv. 2000 », « 02-MAI-57 ») : même lecture que les fiches S-21
+    { const d = App.files.datesIn(t)[0]; if (d) { const [j, mo, y] = d.split('/'); return `${y}-${mo}-${j}`; } }
     if (/^\d{4,5}(\.\d+)?$/.test(t)) return parseDate(Number(t));
     return '';
   }
@@ -581,7 +582,11 @@ App.annuaire = (() => {
       byKey.set(k, {...older, ...newer, naissance: newer.naissance || older.naissance, bapteme: newer.bapteme || older.bapteme});
     }
     const list = [...byKey.values()].sort((a, b) => `${a.nom} ${a.prenom}`.localeCompare(`${b.nom} ${b.prenom}`, 'fr'));
-    const statutS21 = c => c.ps ? 'PS' : c.pp ? 'PP' : c.naissance && !c.bapteme ? 'PNB' : c.bapteme ? '' : undefined;
+    // date écrite mais illisible (« mai 1957 », « été 1990 »…) : à vérifier, et pas de PNB déduit d'un baptême mal lu
+    const brut = (c, k) => !c[k] && /[\dA-Za-z]/.test(c[k === 'naissance' ? 'naisBrut' : 'bapBrut'] || '') ? (c[k === 'naissance' ? 'naisBrut' : 'bapBrut']) : '';
+    const statutS21 = c => c.ps ? 'PS' : c.pp ? 'PP' : brut(c, 'bapteme') ? undefined : c.naissance && !c.bapteme ? 'PNB' : c.bapteme ? '' : undefined;
+    const showDate = (c, k) => c[k] ? api.esc(c[k]) : brut(c, k) ? `<span style="color:var(--warn)" title="Date non reconnue : à compléter dans la fiche">${api.esc(brut(c, k))} ⚠</span>` : '';
+    const nIll = list.filter(c => brut(c, 'naissance') || brut(c, 'bapteme')).length;
     // Assemblée proposée : celle des personnes déjà connues, sinon le titre de la fiche
     const idx = indexOf(api.data.persons), votes = {};
     for (const c of list) { const q = idx.find({prenom: c.prenom, nom: c.nom}); const a = q?.assemblee || c.asm; if (a) votes[a] = (votes[a] || 0) + 1; }
@@ -590,10 +595,10 @@ App.annuaire = (() => {
     const nPNB = list.filter(c => statutS21(c) === 'PNB').length;
 
     const asm = await api.modal({title: `Fiches S-21 lues : ${list.length} proclamateur(s)`, wide: true, body: `<div class="stack">
-      <div class="notice small"><strong>${list.length}</strong> fiche(s) lue(s) dans ${pdfs.length} fichier(s)${nPNB ? ` · <strong>${nPNB}</strong> PNB (date de naissance sans baptême)` : ''}${ignored.length ? ` · ${ignored.length} fichier(s) sans fiche S-21 ignoré(s)` : ''}.</div>
+      <div class="notice small"><strong>${list.length}</strong> fiche(s) lue(s) dans ${pdfs.length} fichier(s)${nPNB ? ` · <strong>${nPNB}</strong> PNB (date de naissance sans baptême)` : ''}${ignored.length ? ` · ${ignored.length} fichier(s) sans fiche S-21 ignoré(s)` : ''}.${nIll ? `<br><span style="color:var(--warn)">⚠ ${nIll} date(s) non reconnue(s) (jour manquant…) : elles ne sont pas reprises, complétez-les dans la fiche.</span>` : ''}</div>
       <label class="field"><span>Assemblée de ces proclamateurs</span><input type="text" id="s21Asm" list="s21AsmL" value="${api.esc(guess)}" placeholder="Nom de l’assemblée"><datalist id="s21AsmL">${api.data.congregations.map(c => `<option value="${api.esc(c.nom)}">`).join('')}</datalist></label>
       <div class="table-wrap" style="max-height:340px"><table class="list"><tr><th>Nom</th><th>Prénom</th><th></th><th>Naissance</th><th>Baptême</th><th>Statut</th><th>Fonction</th><th>Activité</th></tr>
-      ${list.map(c => { const st = statutS21(c); return `<tr><td><strong>${api.esc(c.nom)}</strong></td><td>${api.esc(c.prenom)}</td><td>${c.homme ? 'Frère' : c.femme ? 'Sœur' : ''}</td><td>${api.esc(c.naissance)}</td><td>${api.esc(c.bapteme)}</td>
+      ${list.map(c => { const st = statutS21(c); return `<tr><td><strong>${api.esc(c.nom)}</strong></td><td>${api.esc(c.prenom)}</td><td>${c.homme ? 'Frère' : c.femme ? 'Sœur' : ''}</td><td>${showDate(c, 'naissance')}</td><td>${showDate(c, 'bapteme')}</td>
         <td>${st ? `<span class="pill ${st === 'PNB' ? 'warn' : ''}">${st}</span>` : st === '' ? 'Proclamateur' : '<span class="muted">?</span>'}</td><td>${c.ancien ? 'Ancien' : c.assistant ? 'Assistant' : ''}</td><td class="small">${act(c)}</td></tr>`; }).join('')}</table></div>
       ${ignored.length ? `<details class="small muted"><summary>Fichiers ignorés (${ignored.length})</summary>${ignored.map(api.esc).join('<br>')}</details>` : ''}</div>`,
       actions: [{label: 'Annuler', value: null}, {label: 'Comparer avec l’annuaire…', kind: 'primary', onClick: b => { const v = api.$('#s21Asm', b).value.trim().toUpperCase(); if (!v) { api.toast('Indiquez l’assemblée.', 'error'); return false; } return v; }}]});
