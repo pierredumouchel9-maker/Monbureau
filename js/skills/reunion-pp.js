@@ -433,13 +433,14 @@ App.reunionPP = (() => {
     const flds = ['reunionpp', 'personne', 'expediteur', 'dates'].flatMap(g => (App.fields.groups.find(x => x.id === g)?.fields || []).filter(f => g !== 'personne' || ['prenom', 'nom', 'assemblee'].includes(f.key)));
     const r = await api.modal({title: LETTRES[k], wide: true, body: `<div class="stack">
       <div class="row small"><button class="btn" data-cmd="bold"><b>G</b></button><button class="btn" data-cmd="italic"><i>I</i></button><button class="btn" data-cmd="underline"><u>S</u></button>
-        <button class="btn" data-cmd="justifyLeft">⟸</button><button class="btn" data-cmd="justifyCenter">≡</button><button class="btn" data-cmd="justifyRight">⟹</button>
+        <button class="btn" data-cmd="justifyLeft">⟸</button><button class="btn" data-cmd="justifyCenter">≡</button><button class="btn" data-cmd="justifyRight">⟹</button><button class="btn" data-uni title="Remet le texte sélectionné dans la police et la taille de la lettre">Aa ✕ Uniformiser</button>
         <select id="lF" style="width:auto"><option value="">+ Insérer un champ…</option>${flds.map(f => `<option value="${f.key}">${api.esc(f.label)}</option>`).join('')}</select></div>
       <div id="lEd" contenteditable="true" style="border:1px solid var(--line);border-radius:8px;padding:18px 22px;min-height:380px;max-height:60vh;overflow:auto;background:#fff;color:#111;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.45">${chips(modele(R, k))}</div>
       <p class="small muted" style="margin:0">Les étiquettes bleues sont remplacées automatiquement (date, thème, orateur, répétition…). ${R.lettres?.[k] ? '' : 'Modèle neutre : importez votre classeur ou votre lettre Word pour retrouver votre texte.'}</p></div>`,
       actions: [{label: 'Annuler', value: null}, ...(R.lettres?.[k] ? [{label: 'Modèle neutre', value: 'reset'}] : []), {label: 'Enregistrer', kind: 'primary', onClick: b => unchips(api.$('#lEd', b))}],
       onMount: b => {
         b.querySelectorAll('[data-cmd]').forEach(x => x.addEventListener('mousedown', e => { e.preventDefault(); document.execCommand(x.dataset.cmd); }));
+        b.querySelectorAll('[data-uni]').forEach(x => x.addEventListener('mousedown', e => { e.preventDefault(); window.uniformiser(api.$('#lEd', b)); }));
         api.$('#lF', b).addEventListener('change', e => { const f = e.target.value; if (!f) return; api.$('#lEd', b).focus(); document.execCommand('insertHTML', false, chips(`{{${f}}}`) + '&nbsp;'); e.target.value = ''; });
       }});
     if (r === null || r === undefined) return;

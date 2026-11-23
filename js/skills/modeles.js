@@ -57,7 +57,7 @@ App.modeles = (() => {
             <select id="mBlock" style="width:auto;padding:4px 8px"><option value="p">Texte</option><option value="h2">Grand titre</option><option value="h3">Sous-titre</option></select>
             <button class="btn" data-cmd="bold" title="Gras"><b>G</b></button><button class="btn" data-cmd="italic" title="Italique"><i>I</i></button>
             <button class="btn" data-cmd="justifyLeft" title="Aligner à gauche">⇤</button><button class="btn" data-cmd="justifyCenter" title="Centrer">↔</button>
-            <button class="btn" data-cmd="justifyRight" title="Aligner à droite">⇥</button><button class="btn" data-cmd="justifyFull" title="Justifier">☰</button>
+            <button class="btn" data-cmd="justifyRight" title="Aligner à droite">⇥</button><button class="btn" data-uni title="Remet le texte sélectionné dans la police et la taille du modèle">Aa ✕</button><button class="btn" data-cmd="justifyFull" title="Justifier">☰</button>
             <button class="btn" data-cmd="insertUnorderedList" title="Liste à puces">• Liste</button><button class="btn" data-cmd="insertOrderedList" title="Liste numérotée">1. Liste</button>
             <button class="btn" data-cmd="undo" title="Annuler">↶</button><button class="btn" data-cmd="redo" title="Rétablir">↷</button>
             <select id="mField" style="width:auto;padding:4px 8px"><option value="">+ Insérer un champ</option>
@@ -82,6 +82,7 @@ App.modeles = (() => {
     });
     const restore = () => { ed.focus(); if (range) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(range); } };
     api.$$('[data-cmd]', el).forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); restore(); document.execCommand(b.dataset.cmd); }));
+    api.$$('[data-uni]', el).forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); restore(); window.uniformiser(api.$('#mEd', el)); }));
     api.$('#mBlock', el).addEventListener('change', e => { restore(); document.execCommand('formatBlock', false, e.target.value); });
     api.$('#mField', el).addEventListener('change', e => {
       const k = e.target.value; if (!k) return; restore();

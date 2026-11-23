@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.33.5';
+  const VERSION = '0.33.6';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -444,3 +444,34 @@ const App = (() => {
   return {VERSION, start, registerSkill, api, kvGet, kvSet, kvClear, replaceAll, deriveKey, open, unb64, on, getBoxes, adoptRemote, docKeys, docBox, putDocBox, delDocBox, docBoxes,
           get meta() { return meta; }, set meta(m) { meta = m; }, renderLock};
 })();
+
+/* Coller dans une lettre : le texte prend la police, la taille et la couleur de l'endroit où il est collé
+   (la mise en forme du document d'origine — Word, mail, site — n'est pas reprise). */
+document.addEventListener('paste', e => {
+  const ed = e.target.closest && e.target.closest('[contenteditable="true"]');
+  if (!ed || !e.clipboardData) return;
+  const txt = e.clipboardData.getData('text/plain');
+  if (!txt) return;
+  e.preventDefault();
+  const lines = txt.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '').split('\n');
+  lines.forEach((l, i) => { if (i) document.execCommand('insertParagraph'); if (l) document.execCommand('insertText', false, l.replace(/\t/g, ' ')); });
+}, true);
+
+/* « Uniformiser » : le texte sélectionné reprend la police, la taille et la couleur du paragraphe
+   (gras, italique, souligné et alignement sont conservés). Sans sélection : le paragraphe où se trouve le curseur. */
+window.uniformiser = function (ed) {
+  const sel = getSelection(); if (!sel.rangeCount || !ed.contains(sel.anchorNode)) return;
+  const rg = sel.getRangeAt(0);
+  const blockOf = n => { while (n && n !== ed && !(n.nodeType === 1 && /^(P|LI|DIV|H\d)$/.test(n.tagName))) n = n.parentNode; return n && n !== ed ? n : null; };
+  const roots = rg.collapsed ? [blockOf(rg.startContainer)].filter(Boolean) : [ed];
+  for (const root of roots) {
+    for (const x of [...root.querySelectorAll('span,font')]) {
+      if (x.dataset.champ !== undefined || x.dataset.f !== undefined || x.contentEditable === 'false') continue;
+      if (!rg.collapsed && !rg.intersectsNode(x)) continue;
+      ['font-family', 'font-size', 'color', 'background', 'background-color', 'line-height', 'letter-spacing'].forEach(k => x.style.removeProperty(k));
+      if (x.tagName === 'FONT' || !x.getAttribute('style')) x.replaceWith(...x.childNodes);
+    }
+    for (const b of root === ed ? ed.querySelectorAll('p,li,div,h1,h2,h3') : [root]) if (rg.collapsed || rg.intersectsNode(b)) { b.style.removeProperty('font-family'); b.style.removeProperty('color'); }
+  }
+  ed.dispatchEvent(new Event('input', {bubbles: true}));
+};
