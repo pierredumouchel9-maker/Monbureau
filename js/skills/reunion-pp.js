@@ -265,7 +265,27 @@ App.reunionPP = (() => {
     if (App.circoNom()) center(App.circoNom(), B, 10, mute);
     center(`Programme pour l’année de service ${R.annee || ''}`, Rf, 10, mute);
     center('RÉUNION DU RESPONSABLE DE CIRCONSCRIPTION AVEC LES PIONNIERS', B, 12.5, blue); y -= 4;
-    center(R.theme || '', B, 15); center(longDate(R.date), Rf, 11); center([R.lieu, R.adresse].filter(Boolean).join(' — '), Rf, 10, mute); y -= 10;
+    // Thème : une ligne, sinon deux lignes coupées à un endroit naturel (avant la référence biblique, après la citation), jamais au milieu d'une référence
+    { const th = T(R.theme || '').replace(/\s+/g, ' ').trim(), maxW = W - 2 * M;
+      if (th) {
+        let size = 15, lines = [th];
+        const cuts = []; const ref = th.lastIndexOf(' (');
+        if (ref > 0) cuts.push(ref);                                    // « … » | (Prov. 4:25)
+        const q = th.indexOf('» '); if (q > 0) cuts.push(q + 1);           // « citation » | suite
+        th.replace(/ /g, (m, i) => { const before = th.slice(0, i), open = (before.match(/\(/g) || []).length - (before.match(/\)/g) || []).length; if (!open && !/[«(]$/.test(before)) cuts.push(i); return m; });
+        const fit = (l, sz) => B.widthOfTextAtSize(l, sz) <= maxW;
+        while (size >= 10) {
+          if (fit(th, size)) { lines = [th]; break; }
+          // meilleure coupure : coupures « naturelles » d'abord, puis la plus équilibrée
+          const ok = [...new Set(cuts)].map(i => [th.slice(0, i).trim(), th.slice(i).trim()]).filter(([a, b]) => fit(a, size) && fit(b, size));
+          if (ok.length) { const nat = ok.filter(([a]) => cuts.slice(0, 2).includes(th.indexOf(a) + a.length) || (ref > 0 && a.length === th.slice(0, ref).trim().length) || (q > 0 && a.length === th.slice(0, q + 1).trim().length));
+            const pick = (nat.length ? nat : ok).sort((x, y) => Math.abs(B.widthOfTextAtSize(x[0], size) - B.widthOfTextAtSize(x[1], size)) - Math.abs(B.widthOfTextAtSize(y[0], size) - B.widthOfTextAtSize(y[1], size)))[0];
+            lines = pick; break; }
+          size -= .5;
+        }
+        for (const l of lines) { page.drawText(l, {x: (W - B.widthOfTextAtSize(l, size)) / 2, y: y - size, size, font: B, color: ink}); y -= size * 1.35; }
+      } }
+    center(longDate(R.date), Rf, 11); center([R.lieu, R.adresse].filter(Boolean).join(' — '), Rf, 10, mute); y -= 10;
     page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .8, color: blue}); y -= 6;
     const {rows} = timed(R), groups = groupsOf(R), cT = M, cX = M + 46, cD = W - M - 165, cS = W - M - 120, wX = cD - cX - 10;
     const need = h => { if (y - h < M + 20) { page = doc.addPage([W, H]); y = H - M; } };
