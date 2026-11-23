@@ -390,8 +390,8 @@ App.registerSkill({
           <div class="row"><button class="btn" id="rAdd">+ Ajouter</button><button class="btn" id="rPioPdf">Liste PDF</button></div>
           <p class="small muted" style="margin:0">D’après le statut du dernier cycle de chaque assemblée (Circonscription), à défaut la fiche S-21. Déménagements et décès exclus.</p></div>
       </div>
-      <div class="card stack" style="margin-top:12px"><div class="row"><strong style="flex:1">Programme et orateurs</strong><span class="small muted">De ${X.fmtH(X.toMin(R.debut) ?? 570)} à ${X.fmtH(fin)}</span></div>
-        <div class="table-wrap"><table class="list" id="rTab"><tr><th>Heure</th><th>Type</th><th>Titre</th><th>Min.</th><th>Orateur</th><th>Assemblée</th><th>Interview / démonstration</th><th title="Participation de l’auditoire">Aud.</th><th>Répétition</th><th title="Acceptation reçue">Reçu</th><th></th></tr>
+      <div class="card stack" style="margin-top:12px"><div class="row"><strong style="flex:1">Programme et orateurs</strong><span class="small muted">De ${X.fmtH(X.toMin(R.debut) ?? 570)} à ${X.fmtH(fin)} · Retours : ${R.items.filter(x => x.nom && x.retour && !X.isMe(x) && x.type !== 'cantique').length} / ${R.items.filter(x => x.nom && !X.isMe(x) && ['priere', 'discours', 'partie'].includes(x.type)).length} orateur(s) ont confirmé</span></div>
+        <div class="table-wrap"><table class="list" id="rTab"><tr><th>Heure</th><th>Type</th><th>Titre</th><th>Min.</th><th>Orateur</th><th>Assemblée</th><th>Interview / démonstration</th><th title="Participation de l’auditoire">Aud.</th><th>Répétition</th><th title="Cochez quand l’orateur a confirmé qu’il sera présent et accepte la participation">Retours</th><th></th></tr>
         ${rows.map(({it, h}, i) => { const g = groups[it.id];
           return `<tr data-i="${i}" ${it.type === 'pause' ? 'style="background:var(--bg2,#f3f5f8)"' : ''}>
           <td style="white-space:nowrap;font-weight:600">${h === null ? '' : X.fmtH(h)}</td>
@@ -403,7 +403,7 @@ App.registerSkill({
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="text" data-c="participation" list="rPart" value="${api.esc(it.participation || '')}" style="min-width:150px">` : ''}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="checkbox" data-c="auditoire" ${it.auditoire ? 'checked' : ''}>` : ''}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="text" data-c="repet" value="${api.esc(it.repet || '')}" placeholder="à 18h00" style="width:80px">` : ''}</td>
-          <td>${it.nom && it.type !== 'pause' ? `<input type="checkbox" data-c="retour" ${it.retour ? 'checked' : ''}>` : ''}</td>
+          <td>${it.nom && it.type !== 'pause' && !X.isMe(it) ? `<input type="checkbox" data-c="retour" title="Présent et accepte la participation" ${it.retour ? 'checked' : ''}>` : ''}</td>
           <td style="white-space:nowrap"><button class="btn" data-up title="Monter">↑</button><button class="btn" data-down title="Descendre">↓</button>${['priere', 'discours', 'partie'].includes(it.type) && it.nom && !X.isMe(it) ? `<button class="btn" data-pdf title="Lettre de ${api.esc(X.nomOf(it))} (PDF)">📄</button>` : ''}<button class="btn" data-del title="Supprimer">✕</button></td></tr>`; }).join('')}
         </table></div>
         <datalist id="rPers">${moi ? `<option value="${api.esc(moi.nom + ' ' + moi.prenom)}">Responsable de circonscription${code ? ' (RC ' + api.esc(code) + ')' : ''}</option>` : ''}${anciens.filter(p => !moi || api.norm(p.nom + ' ' + p.prenom) !== api.norm(moi.nom + ' ' + moi.prenom)).map(p => `<option value="${api.esc((p.nom || '').toUpperCase() + ' ' + (p.prenom || ''))}">${pioSt(p) ? pioSt(p) + ' · ' : 'non pionnier · '}${api.esc(p.assemblee || '')}</option>`).join('')}</datalist>
@@ -433,7 +433,7 @@ App.registerSkill({
       else if (e.target.type === 'checkbox') it[c] = e.target.checked;
       else if (c === 'duree') it.duree = Math.max(0, Number(e.target.value) || 0);
       else it[c] = e.target.value.trim();
-      save(); if (['type', 'duree', 'expose', 'orateur'].includes(c)) draw();
+      save(); if (['type', 'duree', 'expose', 'orateur', 'retour'].includes(c)) draw();
     });
     tab.addEventListener('click', async e => {
       const b = e.target.closest('button'); const tr = e.target.closest('tr[data-i]'); if (!b || !tr) return; const i = +tr.dataset.i;
