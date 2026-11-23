@@ -558,7 +558,7 @@ App.circo = (() => {
       const page = doc.addPage([W, H]);
       page.drawText(T(`Trombinoscope — ${asm} — cycle ${c.code}`), {x: M, y: H - M - 14, size: 15, font: B, color: ink});
       page.drawText(T(`${list.length} proclamateurs · ${nbPhotos} photo(s) · page ${pg + 1}/${pages}`), {x: M, y: H - M - 28, size: 8.5, font: R, color: mute});
-      page.drawText(T(`Mon Bureau · document confidentiel · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
+      page.drawText(T(`Mon Bureau${App.circoPied()} · document confidentiel · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
       for (let i = 0; i < per; i++) {
         const r = list[pg * per + i]; if (!r) break;
         const col = i % COLS, row = Math.floor(i / COLS), x = M + col * (cw + gap), yTop = H - top - row * (ch + gap);
@@ -678,7 +678,7 @@ App.circo = (() => {
       const S = v => v * k, Sc = v => v * kc;   // Sc : bilan chiffré, réduit en premier pour tenir sur une page
       const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || S(9.5), font: o.bold ? B : R, color: o.color || ink});
       const fit = (t, f, size, w) => { t = T(t); while (t.length > 1 && f.widthOfTextAtSize(t, size) > w) t = t.slice(0, -2) + '…'; return t; };
-      const footer = () => page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
+      const footer = () => page.drawText(T(`Mon Bureau${App.circoPied()} · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
       const need = h => { if (y - h < M + 10) { if (paging) { page = doc.addPage([W, H]); y = H - M; footer(); } else over = true; } };
       const section = t => { y -= S(4); txt(t, M, y - S(11), {bold: true, size: S(12), color: blue}); y -= S(16); page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .7, color: blue}); y -= S(6); };
       footer();
@@ -686,6 +686,7 @@ App.circo = (() => {
       const x0 = particul(asm), tags = [x0.aum ? `Assemblée référente aumônerie en prison${x0.lieu ? ' (' + x0.lieu + ')' : ''}` : '', ...x0.groupes].filter(Boolean).join(' · ');
       txt(`Bilan du cycle ${c.code} — ${asm}`, M, y - S(15), {bold: true, size: S(16)});
       if (tags) txt(tags, M + B.widthOfTextAtSize(T(`Bilan du cycle ${c.code} — ${asm}`), S(16)) + 14, y - S(14), {size: S(8.5), color: mute});
+      if (App.circoNom()) txt(App.circoNom(), W - M - B.widthOfTextAtSize(T(App.circoNom()), S(9)), y - S(13), {bold: true, size: S(9), color: blue});
       y -= S(20);
 
       // Chiffres : cases sur 2 lignes
@@ -827,7 +828,7 @@ App.circo = (() => {
     const newPage = (n, tot) => { const pg = doc.addPage([W, H]);
       pg.drawText(T(`Groupes de prédication — ${asm}${tot > 1 ? ` (${n}/${tot})` : ''}`), {x: M, y: H - M - 12, size: 15, font: B, color: blue});
       pg.drawLine({start: {x: M, y: H - M - 19}, end: {x: W - M, y: H - M - 19}, thickness: .8, color: blue});
-      pg.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · d’après « ${d.name} » (importé le ${api.dateCourte(d.date)})`), {x: M, y: 12, size: 7, font: R, color: mute});
+      pg.drawText(T(`Mon Bureau${App.circoPied()} · ${asm} · cycle ${c.code} · d’après « ${d.name} » (importé le ${api.dateCourte(d.date)})`), {x: M, y: 12, size: 7, font: R, color: mute});
       return pg; };
     const top = H - M - 28, areaW = W - 2 * M, areaH = top - 26;
     if (!blob) { const pg = newPage(1, 1); pg.drawText(T('Document pas encore reçu sur cet appareil : synchronisez puis générez de nouveau le bilan.'), {x: M, y: top - 20, size: 10, font: R, color: mute}); return; }
@@ -966,7 +967,7 @@ App.circo = (() => {
       page.drawRectangle({x: M + 110, y: Y(top + ah), width: aw - 110, height: ah, color: white, borderColor: teal, borderWidth: 1});
       lines.forEach((l, i) => page.drawText(l, {x: M + 118, y: Y(top + 6 + (i + 1) * 11 - 3.5 + (ah - 6 - lines.length * 11) / 2), size: 8.5, font: R, color: ink}));
       top += ah + 12; }
-    page.drawText(T(`Mon Bureau · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
+    page.drawText(T(`Mon Bureau${App.circoPied()} · ${asm} · cycle ${c.code} · imprimé le ${api.dateLongue()}`), {x: M, y: 12, size: 7, font: R, color: mute});
   }
   function assembleeView(el, name) {
     const S = store(), cycles = sortedCycles();

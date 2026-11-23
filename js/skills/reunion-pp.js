@@ -145,6 +145,53 @@ App.reunionPP = (() => {
     api.toast(`Classeur importé : ${R.items.length} élément(s) de programme, ${Object.keys(R.lettres).length} modèle(s) de lettre`);
     return true;
   }
+  /* ---------- Courrier officiel : page « Programme pour l'année de service … » (thème, éléments, durées) ---------- */
+  function parseProgramme(lines) {
+    const i0 = lines.findIndex(l => /Programme pour l.ann[ée]e de service/i.test(l)); if (i0 < 0) return null;
+    const annee = (/(\d{4})/.exec(lines[i0]) || [])[1] || '';
+    let k = i0 + 1, theme = '';
+    if (/^Th[èe]me\s*:/i.test(lines[k] || '')) { theme = lines[k].replace(/^Th[èe]me\s*:\s*/i, ''); k++;
+      while (k < lines.length && !/\(\s*\d+\s*min/i.test(lines[k]) && !/^Cantique/i.test(lines[k])) theme += ' ' + lines[k++]; }
+    // éléments : une ligne se termine par « (N min) » (sinon elle continue sur la suivante)
+    const els = []; let cur = '';
+    for (; k < lines.length; k++) { const l = lines[k].trim(); if (!l) continue; if (/^\d+\/\d+\/\d+-[A-Z]+$/.test(l)) break;
+      cur = cur ? cur + ' ' + l : l; if (/\(\s*\d+\s*min\.?\s*\)\s*$/i.test(cur)) { els.push(cur); cur = ''; } }
+    const items = []; let expose = '';
+    els.forEach((e, n) => {
+      const bullet = /^[•·\-–]\s*/.test(e), t = e.replace(/^[•·\-–]\s*/, ''), m = /^(.*?)\s*\(\s*(\d+)\s*min\.?\s*\)\s*$/i.exec(t); if (!m) return;
+      const titre = m[1].trim(), duree = +m[2];
+      const ex = /^Exposé en .*?parties?\s*:\s*(.+)$/i.exec(titre); if (ex) { expose = ex[1].trim(); return; }
+      if (bullet && expose) { items.push({type: 'partie', expose, titre, duree}); return; }
+      expose = '';
+      const c = /^Cantique\s+(?:n[o°º]\s*)?(\d+)\s*(et\s+prière)?/i.exec(titre);
+      if (c) { const first = !items.length; items.push({type: 'cantique', titre: first ? `Cantique ${c[1]}` : `Cantique ${c[1]}${c[2] ? ' et prière' : ''}`, duree});
+        if (first && c[2]) items.push({type: 'priere', titre: 'Prière', duree: 0}); return; }
+      if (/^Pause$/i.test(titre)) { items.push({type: 'pause', titre: 'Pause', duree}); return; }
+      items.push({type: 'discours', titre, duree});
+    });
+    return items.length ? {annee, theme: theme.replace(/\s+/g, ' ').trim(), items} : null;
+  }
+  async function importCourrier(R) {
+    const file = await api.pickFile('.pdf'); if (!file) return false;
+    let pages; try { pages = await App.files.readLayout(file); } catch (e) { api.toast('Lecture impossible : ' + e.message, 'error'); return false; }
+    let prog = null;
+    for (const cells of pages) {
+      const rows = [];
+      for (const c of [...cells].sort((a, b) => a.y - b.y || a.x - b.x)) { const r = rows.find(r => Math.abs(r.y - c.y) < Math.max(3, c.h * .5)); r ? r.cells.push(c) : rows.push({y: c.y, cells: [c]}); }
+      prog = parseProgramme(rows.map(r => r.cells.sort((a, b) => a.x - b.x).map(c => c.text).join(' ').replace(/\s+/g, ' ').trim()));
+      if (prog) break;
+    }
+    if (!prog) { api.toast('Page « Programme pour l’année de service » introuvable dans ce PDF.', 'error'); return false; }
+    if (R.items.some(x => x.nom) && !await api.confirm('Remplir le programme', `Le programme actuel (avec ses orateurs) sera remplacé par celui du courrier : ${prog.items.length} élément(s). Les orateurs déjà attribués sont gardés quand le titre est le même. Continuer ?`, 'Remplacer')) return false;
+    // orateurs déjà attribués : repris si le même titre revient
+    const keep = new Map(R.items.filter(x => x.nom).map(x => [N(x.titre), x]));
+    R.items = prog.items.map(it => { const o = keep.get(N(it.titre)); return {id: api.uid(), expose: '', nom: '', prenom: '', asm: '', participation: '', repet: '', auditoire: false, retour: false, plan: '',
+      ...(o && it.type !== 'cantique' && it.type !== 'pause' ? {nom: o.nom, prenom: o.prenom, asm: o.asm, participation: o.participation, repet: o.repet, auditoire: o.auditoire, retour: o.retour, plan: o.plan} : {}), ...it}; });
+    // numéros de plan, dans l'ordre (comme le classeur : Plan 1, Plan 2…)
+    let n = 0; for (const it of R.items) if (['discours', 'partie'].includes(it.type)) it.plan = `Plan ${++n}`;
+    if (prog.theme) R.theme = prog.theme; if (prog.annee) R.annee = prog.annee;
+    api.save(); api.toast(`Programme ${prog.annee} rempli : ${R.items.length} élément(s)`); return true;
+  }
   async function importInvitation(R) {
     const file = await api.pickFile('.docx,.html,.htm'); if (!file) return false;
     try {
@@ -198,6 +245,7 @@ App.reunionPP = (() => {
     let page = doc.addPage([W, H]), y = H - M;
     const wrap = (t, f, s, w) => { const out = []; let cur = ''; for (const wd of T(t).split(' ')) { const nx = cur ? cur + ' ' + wd : wd; if (f.widthOfTextAtSize(nx, s) > w && cur) { out.push(cur); cur = wd; } else cur = nx; } if (cur) out.push(cur); return out; };
     const center = (t, f, s, c = ink) => { for (const l of wrap(t, f, s, W - 2 * M)) { page.drawText(l, {x: (W - f.widthOfTextAtSize(l, s)) / 2, y: y - s, size: s, font: f, color: c}); y -= s * 1.35; } };
+    if (App.circoNom()) center(App.circoNom(), B, 10, mute);
     center(`Programme pour l’année de service ${R.annee || ''}`, Rf, 10, mute);
     center('RÉUNION DU RESPONSABLE DE CIRCONSCRIPTION AVEC LES PIONNIERS', B, 12.5, blue); y -= 4;
     center(R.theme || '', B, 15); center(longDate(R.date), Rf, 11); center([R.lieu, R.adresse].filter(Boolean).join(' — '), Rf, 10, mute); y -= 10;
@@ -223,7 +271,7 @@ App.reunionPP = (() => {
       if (it.nom) { page.drawText(T(nomOf(it)), {x: cS, y: y - 11, size: 10, font: B, color: ink}); if (it.asm) page.drawText(T(it.asm), {x: cS, y: y - 23, size: 8.5, font: Rf, color: mute}); }
       y -= hh; page.drawLine({start: {x: M, y: y + 2}, end: {x: W - M, y: y + 2}, thickness: .4, color: rgb(.85, .87, .9)});
     }
-    for (const pg of doc.getPages()) pg.drawText(T(`Mon Bureau · mis à jour le ${api.dateLongue()}`), {x: M, y: 18, size: 7, font: Rf, color: mute});
+    for (const pg of doc.getPages()) pg.drawText(T(`Mon Bureau${App.circoPied()} · mis à jour le ${api.dateLongue()}`), {x: M, y: 18, size: 7, font: Rf, color: mute});
     return doc.save();
   }
   async function pionniersPdf(R) {
@@ -231,6 +279,8 @@ App.reunionPP = (() => {
     const L = pionniers(R), doc = await PDFDocument.create(), Rf = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold);
     const W = 595.28, H = 841.89, M = 42; let page = doc.addPage([W, H]), y = H - M, col = 0;
     page.drawText(T(`Réunion des pionniers ${longDate(R.date)} — pionniers invités (${L.length})`), {x: M, y: y - 14, size: 13, font: B}); y -= 30;
+    if (App.circoNom()) { page.drawText(T(App.circoNom()), {x: M, y: y + 2, size: 9, font: Rf, color: rgb(.42, .45, .5)}); y -= 12; }
+    page.drawText(T(`Mon Bureau${App.circoPied()} · imprimé le ${api.dateLongue()}`), {x: M, y: 18, size: 7, font: Rf, color: rgb(.42, .45, .5)});
     const asms = [...new Set(L.map(p => p.asm))];
     for (const a of asms) {
       const l = L.filter(p => p.asm === a); if (y - 16 - l.length * 12 < M) { page = doc.addPage([W, H]); y = H - M; }
@@ -261,7 +311,7 @@ App.reunionPP = (() => {
     R.lettres ??= {}; if (r === 'reset') delete R.lettres[k]; else R.lettres[k] = r;
     api.save(); redraw();
   }
-  return {store, modele, onePage, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
+  return {store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
 })();
 
 App.registerSkill({
@@ -282,7 +332,8 @@ App.registerSkill({
     if (!R) {
       el.innerHTML = `${head}<div class="card stack" style="max-width:720px"><strong>Commencer</strong>
         <p class="small muted" style="margin:0">Importez votre classeur « Publipostage Réunion PP » (.xlsm) : le thème, la date, le lieu, les répétitions, le programme, les orateurs et les textes de vos lettres sont repris. Ou partez d’un programme vide.</p>
-        <div class="row"><button class="btn primary" id="rImp">Importer le classeur Excel…</button><button class="btn" id="rNew">Programme vide</button></div></div>`;
+        <div class="row"><button class="btn primary" id="rImp">Importer le classeur Excel…</button><button class="btn" id="rCour">Depuis le courrier officiel (PDF)…</button><button class="btn" id="rNew">Programme vide</button></div></div>`;
+      api.$('#rCour', el).addEventListener('click', async () => { const r = newR(); if (await X.importCourrier(r)) draw(); else { S.reunions.splice(S.reunions.indexOf(r), 1); api.save(); } });
       api.$('#rImp', el).addEventListener('click', async () => { const r = newR(); if (await X.importClasseur(r)) draw(); else { S.reunions.splice(S.reunions.indexOf(r), 1); api.save(); } });
       api.$('#rNew', el).addEventListener('click', () => { newR(); draw(); });
       return;
@@ -295,7 +346,7 @@ App.registerSkill({
     el.innerHTML = `${head}
       <div class="row" style="margin-bottom:12px">
         <select id="rSel" style="width:auto;font-weight:600">${S.reunions.map(r => `<option value="${r.id}" ${r.id === R.id ? 'selected' : ''}>Réunion ${api.esc(r.annee || '')}${r.date ? ' — ' + api.esc(X.longDate(r.date)) : ''}</option>`).join('')}</select>
-        <button class="btn" id="rNew">+ Nouvelle réunion</button><button class="btn" id="rImp">Importer le classeur Excel…</button><span style="flex:1"></span>
+        <button class="btn" id="rNew">+ Nouvelle réunion</button><button class="btn" id="rImp">Importer le classeur Excel…</button><button class="btn" id="rCour" title="Lettre officielle avec la page « Programme pour l’année de service » : thème, éléments et durées">Remplir depuis le courrier (PDF)…</button><span style="flex:1"></span>
         <button class="btn primary" id="rProg">Programme PDF</button><button class="btn" id="rLet">Lettres aux orateurs (ZIP)</button><button class="btn" id="rInv">Invitation PDF</button></div>
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;align-items:start">
         <div class="card stack" id="rInfo"><strong>Réunion</strong>
@@ -356,6 +407,7 @@ App.registerSkill({
       if (R.items.some(x => x.nom) && !await api.confirm('Importer le classeur', `Les informations et le programme de la réunion ${R.annee || ''} seront remplacés par ceux du classeur. Continuer ?`, 'Importer')) return;
       if (await X.importClasseur(R)) draw(); });
     api.$('#rImpInv', el).addEventListener('click', async () => { if (await X.importInvitation(R)) draw(); });
+    api.$('#rCour', el).addEventListener('click', async () => { if (await X.importCourrier(R)) draw(); });
     el.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => X.editLettre(R, b.dataset.edit, draw)));
     api.$('#rInfo', el).addEventListener('change', e => { const f = e.target.dataset.f; if (!f) return; R[f] = e.target.value.trim(); if (f === 'date') delete R.dateTexte; if (f === 'repetDate') delete R.repetTexte; save(); if (['debut', 'date', 'annee'].includes(f)) draw(); });
     const tab = api.$('#rTab', el);

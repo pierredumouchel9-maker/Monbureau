@@ -62,8 +62,9 @@ App.circoArchive = (() => {
   const recent = e => Date.now() - new Date(e.rangeeLe || 0) < SIX_MOIS;
   // Choix de la circonscription dans la barre latérale (seulement s'il y en a plusieurs)
   function navSelect() {
-    if (!api.data || !list().length) return '';
+    if (!api.data) return '';
     const a = active();
+    if (!list().length) return a.code || a.nom ? `<div class="small muted" style="margin:-4px 12px 10px;font-weight:600" title="Circonscription">${api.esc(label(a))}</div>` : '';
     return `<select id="navCirco" title="Changer de circonscription" style="margin:0 10px 8px;width:calc(100% - 20px);font-size:13px;padding:4px 6px">
       <option value="">${api.esc(label(a))}</option>${list().map(e => `<option value="${e.id}">${api.esc(label(e))}</option>`).join('')}</select>`;
   }
@@ -73,3 +74,7 @@ App.circoArchive = (() => {
   }
   return {list, active, label, switchTo, createNew, remove, recent, navSelect, bindNav, banner() {}};
 })();
+
+// Nom de la circonscription pour les documents produits : « Circonscription NM01 — Normandie 01 »
+App.circoNom = () => { const c = App.api.data?.settings?.circo || {}, t = [c.code, c.nom].filter(Boolean).join(' — '); return t ? `Circonscription ${t}` : ''; };
+App.circoPied = () => App.circoNom() ? ` · ${App.circoNom()}` : '';

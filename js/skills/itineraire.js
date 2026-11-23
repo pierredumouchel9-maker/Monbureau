@@ -470,6 +470,7 @@ App.registerSkill({
       const W = 595.28, H = 841.89, M = 28, page = doc.addPage([W, H]), ink = rgb(.1, .1, .12), mute = rgb(.45, .47, .5), line = rgb(.8, .82, .85);
       const hex = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
       page.drawText(T('Itinéraire ' + A.titre), {x: M, y: H - M - 14, size: 16, font: B, color: rgb(.12, .25, .4)});
+      if (App.circoNom()) page.drawText(T(App.circoNom()), {x: W - M - B.widthOfTextAtSize(T(App.circoNom()), 10), y: H - M - 13, size: 10, font: B, color: mute});
       const cols = [['Sem.', 24], ['Du – au', 58], ['Itinéraire', 200], ['Remarques', 125], ['Vacances', 50], ['S-302', 28], ['jw', 22], ['Cour.', 0]];
       cols[cols.length - 1][1] = W - 2 * M - cols.slice(0, -1).reduce((a, c) => a + c[1], 0);
       const nSep = A.semaines.filter((_, i) => i === 0 || halfOf(weekOf(A, i - 1).s) !== halfOf(weekOf(A, i).s)).length;
@@ -489,7 +490,7 @@ App.registerSkill({
         x = M; vals.forEach((v, j) => { let s = T(v); const f = j === 2 && (!isV(r.type) || TXT[r.type]) ? B : R; while (s.length > 1 && f.widthOfTextAtSize(s, fs) > cols[j][1] - 4) s = s.slice(0, -2) + '…'; if (s) page.drawText(s, {x: x + 2, y: y - rh + 4, size: fs, font: f, color: j === 3 ? mute : j === 2 && TXT[r.type] ? hex(TXT[r.type]) : ink}); x += cols[j][1]; });
         y -= rh; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .3, color: line});
       });
-      page.drawText(T(`Mon Bureau · imprimé le ${api.dateLongue()}`), {x: M, y: 14, size: 7, font: R, color: mute});
+      page.drawText(T(`Mon Bureau${App.circoPied()} · imprimé le ${api.dateLongue()}`), {x: M, y: 14, size: 7, font: R, color: mute});
       return new Blob([await doc.save()], {type: 'application/pdf'});
     }
 

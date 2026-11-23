@@ -109,10 +109,10 @@ App.registerSkill({
       const hex = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
       let page, y;
       const newPage = () => { page = doc.addPage([W, H]); y = H - M;
-        page.drawText(T(`Mon Bureau · Analyse S-13 · ${asm} · au ${fr(r.date)}`), {x: M, y: 18, size: 7, font: R, color: mute}); };
+        page.drawText(T(`Mon Bureau${App.circoPied()} · Analyse S-13 · ${asm} · au ${fr(r.date)}`), {x: M, y: 18, size: 7, font: R, color: mute}); };
       const txt = (t, x, yy, o = {}) => page.drawText(T(t), {x, y: yy, size: o.size || 9, font: o.bold ? B : R, color: o.color || ink});
       newPage();
-      txt(`Analyse du S-13 — ${asm}`, M, y - 16, {size: 18, bold: true, color: blue}); y -= 34;
+      txt(`Analyse du S-13 — ${asm}`, M, y - 16, {size: 18, bold: true, color: blue}); if (App.circoNom()) txt(App.circoNom(), M, y - 30, {size: 9, color: mute}); y -= App.circoNom() ? 44 : 34;
       txt(`Au ${fr(r.date)} · ${r.pages} pages · ${r.total} territoires · fichier « ${r.docName} »`, M, y, {size: 10, color: mute}); y -= 26;
       const bw = (W - 2 * M - 5 * 8) / 6;
       CATS.forEach((c, i) => { const x = M + i * (bw + 8);
