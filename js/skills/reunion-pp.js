@@ -264,7 +264,7 @@ App.reunionPP = (() => {
     const center = (t, f, s, c = ink) => { for (const l of wrap(t, f, s, W - 2 * M)) { page.drawText(l, {x: (W - f.widthOfTextAtSize(l, s)) / 2, y: y - s, size: s, font: f, color: c}); y -= s * 1.35; } };
     if (App.circoNom()) center(App.circoNom(), B, 10, mute);
     center(`Programme pour l’année de service ${R.annee || ''}`, Rf, 10, mute);
-    center('RÉUNION DU RESPONSABLE DE CIRCONSCRIPTION AVEC LES PIONNIERS', B, 12.5, blue); y -= 4;
+    center('RÉUNION DU RESPONSABLE DE CIRCONSCRIPTION AVEC LES PIONNIERS', B, 12.5, blue); y -= 16;   // espace pour détacher le thème
     // Thème : une ligne, sinon deux lignes coupées à un endroit naturel (avant la référence biblique, après la citation), jamais au milieu d'une référence
     { const th = T(R.theme || '').replace(/\s+/g, ' ').trim(), maxW = W - 2 * M;
       if (th) {
@@ -284,6 +284,7 @@ App.reunionPP = (() => {
           size -= .5;
         }
         for (const l of lines) { page.drawText(l, {x: (W - B.widthOfTextAtSize(l, size)) / 2, y: y - size, size, font: B, color: ink}); y -= size * 1.35; }
+        y -= 12;   // espace avant la date
       } }
     center(longDate(R.date), Rf, 11); center([R.lieu, R.adresse].filter(Boolean).join(' — '), Rf, 10, mute); y -= 10;
     page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: .8, color: blue}); y -= 6;
