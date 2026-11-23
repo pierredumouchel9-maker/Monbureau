@@ -5,7 +5,7 @@
 'use strict';
 
 const App = (() => {
-  const VERSION = '0.28.8';
+  const VERSION = '0.30.0';
   const ITERATIONS = 600000;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -91,7 +91,10 @@ const App = (() => {
       return photosLoading ??= (async () => { const box = await kvGet('photos'); photos = box ? await open(key, box) : {}; photosLoading = null; return photos; })();
     },
     get(id) { return photos ? photos[id] || null : null; },
-    count() { return photos ? Object.keys(photos).length : 0; },
+    count() { return photos ? Object.keys(photos).filter(k => !k.startsWith('arch:')).length : 0; },
+    // renomme ou retire des photos en une seule écriture (circonscription mise de côté : clés « arch:<id>:<personne> »)
+    async remap(fn) { await photoApi.load(); const out = {}; for (const [k, v] of Object.entries(photos)) { const k2 = fn(k); if (k2) out[k2] = v; } photos = out; await kvSet('photos', await seal(key, photos)); emit('saved'); },
+    async clear() { photos = {}; await kvSet('photos', await seal(key, photos)); emit('saved'); },
     async set(id, dataUrl) { await photoApi.load(); if (dataUrl) photos[id] = dataUrl; else delete photos[id]; await kvSet('photos', await seal(key, photos)); emit('saved'); },
     async setMany(map) { await photoApi.load(); Object.assign(photos, map); await kvSet('photos', await seal(key, photos)); emit('saved'); },
     async prune(ids) { await photoApi.load(); let n = 0; for (const id of Object.keys(photos)) if (!ids.has(id)) { delete photos[id]; n++; } if (n) await kvSet('photos', await seal(key, photos)); return n; }
@@ -282,7 +285,9 @@ const App = (() => {
     // Un document présent ici mais absent de la version reçue (perdu lors d'un conflit) : on le garde, sauf s'il a été retiré exprès
     const prev = data?.docs || {}, held = new Set(await docKeys()); let kept = 0;
     data = d; photos = null; vault.forget();
-    for (const [id, m] of Object.entries(prev)) if (held.has(id) && !data.docs?.[id] && !data.docsRemoved?.[id]) { (data.docs ??= {})[id] = m; kept++; }
+    // (sauf les documents d'une circonscription mise de côté : ils sont rangés avec elle)
+    const parked = new Set((data.circos || []).flatMap(a => Object.keys(a.docs || {})));
+    for (const [id, m] of Object.entries(prev)) if (held.has(id) && !data.docs?.[id] && !data.docsRemoved?.[id] && !parked.has(id)) { (data.docs ??= {})[id] = m; kept++; }
     if (kept) save();
     renderNav(); route();
   }
@@ -304,12 +309,13 @@ const App = (() => {
         <span class="ico">${s.icon || '•'}</span>${esc(s.name)}${s.status !== 'actif' ? '<span class="tag">bientôt</span>' : ''}</a>`;
     const socle = skills.filter(s => s.group === 'socle' && !s.hidden);
     const metier = skills.filter(s => s.group !== 'socle' && (s.status !== 'actif' || isEnabled(s)));
-    nav.innerHTML = `<div class="brand"><img src="icon.svg" alt="">Mon Bureau</div>
+    nav.innerHTML = `<div class="brand"><img src="icon.svg" alt="">Mon Bureau</div>${App.circoArchive ? App.circoArchive.navSelect() : ''}
       ${socle.filter(s => s.position !== 'bas').map(link).join('')}
       <div class="group">Skills</div>${metier.map(link).join('') || '<span class="small muted" style="padding:4px 10px">Aucun skill actif</span>'}
       <div class="spacer"></div>
       ${socle.filter(s => s.position === 'bas').map(link).join('')}
       <a class="nav" href="#" data-action="lock"><span class="ico">🔒</span>Verrouiller</a>`;
+    if (App.circoArchive) App.circoArchive.bindNav(nav);
   }
   function route() {
     if (!key) return;

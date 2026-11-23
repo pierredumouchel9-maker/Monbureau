@@ -12,7 +12,7 @@ App.registerSkill({
     const metier = api.skills.filter(x => x.group !== 'socle');
     el.innerHTML = `
       <div class="page-head"><div><h1>Bonjour${p.prenom ? ' ' + api.esc(p.prenom) : ''}</h1>
-      <p>Toutes vos données sont chiffrées sur cet appareil.</p></div></div>
+      <p>${s.circo?.code || s.circo?.nom ? `Circonscription <strong>${api.esc([s.circo.code, s.circo.nom].filter(Boolean).join(' — '))}</strong> · ${api.data.congregations.length} assemblée(s) · ` : ''}Toutes vos données sont chiffrées sur cet appareil.</p></div></div>
       <div class="stack">
         ${backupNotice}${profilNotice}${(() => { const L = App.itineraire ? App.itineraire.alerts() : []; if (!L.length) return '';
           return `<div class="notice danger"><strong>⚠ Courriers à envoyer (visites dans moins de 6 semaines)</strong><ul style="margin:6px 0 0 18px;padding:0">${L.map(x => `<li><strong>${api.esc(x.r.asm || x.r.libelle)}</strong> — semaine du ${x.s.toLocaleDateString('fr-FR')} (dans ${x.jours} j) : ${x.manque.join(' et ')}</li>`).join('')}</ul><a href="#/itineraire">Ouvrir l’itinéraire</a></div>`; })()}

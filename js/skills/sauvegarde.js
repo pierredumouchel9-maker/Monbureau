@@ -4,16 +4,18 @@
 App.backup = (() => {
   const api = App.api;
 
-  async function exportBackup() {
+  async function exportBackup(opts = {}) {
     await api.flush();
     const [meta, data, vault, photos] = await Promise.all([App.kvGet('meta'), App.kvGet('data'), App.kvGet('vault'), App.kvGet('photos')]);
     const file = {format: 'mon-bureau-sauvegarde', version: 1, exportedAt: new Date().toISOString(), app: App.VERSION, meta, data, vault};
     if (photos) file.photos = photos;   // photos chiffrées, comme le reste
     const docs = await App.docBoxes(); if (Object.keys(docs).length) file.docs = docs;   // documents joints, chiffrés
     const d = new Date(), pad = n => String(n).padStart(2, '0');
-    api.download(`MonBureau-sauvegarde-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.monbureau`, new Blob([JSON.stringify(file)], {type: 'application/json'}));
+    const name = `${opts.prefix || 'MonBureau-sauvegarde'}-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.monbureau`;
+    api.download(name, new Blob([JSON.stringify(file)], {type: 'application/json'}));
     api.data.settings.lastBackup = file.exportedAt; api.save();
-    api.toast('Sauvegarde chiffrée téléchargée');
+    api.toast(opts.prefix ? 'Archive chiffrée téléchargée' : 'Sauvegarde chiffrée téléchargée');
+    return name;
   }
 
   // Restauration : fonctionne depuis l'écran d'accueil (premier lancement) ou depuis la page Sauvegarde.
