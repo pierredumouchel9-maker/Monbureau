@@ -130,7 +130,7 @@ App.reunionPP = (() => {
       if (/^Préparation personnelle\s*:/i.test(t)) return out.push(`<p><b>Préparation personnelle :</b>${h.replace(/^(<[^>]+>)*Préparation personnelle\s*:(<\/[^>]+>)*/i, '')}</p>`);
       if (/^Une répétition est prévue/i.test(t)) return out.push(`<p><b>Une répétition</b> est prévue : <b>${t.replace(/^Une répétition est prévue\s*:?\s*/i, '')}</b></p>`);
       if (/^Je te remercie de me confirmer/i.test(t)) return out.push(`<p style="${P.box}">${t}</p>`);
-      if (/^(Ton frère|Ta sœur) dans la foi/i.test(t)) { skipName = !!sig; return out.push(`<p style="margin-left:110pt">${t}${sig ? ` <img src="${sig}" style="width:170pt">` : ''}</p>`); }
+      if (/^(Ton frère|Ta sœur) dans la foi/i.test(t)) { skipName = !!sig; out.push(`<p style="margin-left:110pt">${t}</p>`); if (sig) out.push(`<p style="margin-left:110pt"><img src="${sig}" style="width:230pt"></p>`); return; }   // signature en grand, sous la formule
       out.push(`<p${/text-align:center/.test(paras[i] || '') ? ' style="text-align:center"' : ''}>${h}</p>`);
     });
     flush();
