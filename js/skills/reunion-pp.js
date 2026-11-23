@@ -307,7 +307,7 @@ App.reunionPP = (() => {
       // heure de fin écrite dans la lettre : gardée comme « fin annoncée » (sinon la fin calculée du programme)
       const fin = /terminera à\s*(?:<[^>]+>)*\s*(\d{1,2})\s*h\s*(\d{2})/i.exec(html.replace(/<\/?[biu]>/g, ''));
       if (fin && !R.finAnnoncee) R.finAnnoncee = `${+fin[1]}h${fin[2]}`;
-      (R.lettres ??= {}).invitation = tidy(fieldify(html, R)); api.save(); api.toast('Lettre d’invitation importée'); return true;
+      (R.lettres ??= {}).invitation = fieldify(html, R);   // mise en page exacte du document (lignes vides comprises) api.save(); api.toast('Lettre d’invitation importée'); return true;
     } catch (e) { api.toast('Lecture impossible : ' + e.message, 'error'); return false; }
   }
 
@@ -336,7 +336,9 @@ App.reunionPP = (() => {
     let bytes = await App.pdf.render(html, {title});
     for (const [m, fs] of [[44, 10.5], [38, 10], [32, 9.5]]) {
       if ((await window.PDFLib.PDFDocument.load(bytes)).getPageCount() <= 1) break;
-      bytes = await App.pdf.render(`<div data-marge="${m}" style="font-size:${fs}pt">${html.replace(/data-marge="[\d.]+"/g, '')}</div>`, {title});
+      // les tailles écrites dans le modèle (documents Word) sont réduites dans la même proportion
+      const k = fs / 11, h2 = html.replace(/data-marge="[\d.]+"/g, '').replace(/font-size:\s*([\d.]+)pt/g, (_, v) => `font-size:${(+v * k).toFixed(1)}pt`).replace(/margin-top:\s*([\d.]+)pt/g, (_, v) => `margin-top:${(+v * k).toFixed(1)}pt`);
+      bytes = await App.pdf.render(`<div data-marge="${m}" style="font-size:${fs}pt">${h2}</div>`, {title});
     }
     return bytes;
   }

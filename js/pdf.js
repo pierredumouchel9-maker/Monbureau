@@ -147,8 +147,11 @@ App.pdf = (() => {
     const INK = [0.12, 0.13, 0.16], col = c => rgb(...(c || INK));
     const mm = /data-marge="(\d+(?:\.\d+)?)"/.exec(html); if (mm) margin = +mm[1];   // marge propre au modèle
     const W = 595.28, H = 841.89, M = margin, maxW = W - 2 * M;
-    let page = doc.addPage([W, H]), y = H - M;
-    const newPage = () => { page = doc.addPage([W, H]); y = H - M; };
+    // document Word repris tel quel : marge haute propre, interligne simple, pas d'espace automatique entre paragraphes
+    const serre = /data-serre/.test(html), mh = /data-marge-haut="(\d+(?:\.\d+)?)"/.exec(html), MT = mh ? +mh[1] : M;
+    const LH = serre ? 1.17 : 1.3, AFTER = serre ? 0 : 0.45;
+    let page = doc.addPage([W, H]), y = H - MT;
+    const newPage = () => { page = doc.addPage([W, H]); y = H - MT; };
 
     for (const blk of toBlocks(html)) {
       const size = blk.size, indent = blk.indent || 0, width = maxW - indent;
@@ -174,7 +177,7 @@ App.pdf = (() => {
         for (const part of clean(r.text).split(/( )/)) if (part) push({text: part, font: f, w: f.widthOfTextAtSize(part, sz), sz, color: r.color, bg: r.bg, ul: r.underline});
       }
       for (const l of lines) while (l.length && l.at(-1).text === ' ') l.pop();
-      const lhOf = l => Math.max(size, ...l.map(p => p.sz || size)) * 1.3;
+      const lhOf = l => Math.max(size, ...l.map(p => p.sz || size)) * LH;
       const blockH = lines.reduce((a, l) => a + lhOf(l), 0);
       y -= blk.before || 0;
       if ((blk.bg || blk.box) && y - blockH < M && blockH < H - 2 * M) newPage();
@@ -199,8 +202,8 @@ App.pdf = (() => {
         });
         y -= lh;
       }
-      if (blk.rule) page.drawLine({start: {x: M + indent, y: y + size * .1}, end: {x: M + indent + width, y: y + size * .1}, thickness: .8, color: col(blk.ruleColor)});
-      y -= size * 0.45; // espace après le paragraphe
+      if (blk.rule) { const ry = serre ? y - size * .12 : y + size * .1; page.drawLine({start: {x: M + indent, y: ry}, end: {x: M + indent + width, y: ry}, thickness: .8, color: col(blk.ruleColor)}); if (serre) y -= size * .3; }
+      y -= size * AFTER; // espace après le paragraphe
     }
     return doc.save();
   }

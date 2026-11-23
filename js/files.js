@@ -656,39 +656,63 @@ App.files = (() => {
     const z = await unzip(await file.arrayBuffer()), W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
     const doc = xml(await z.text('word/document.xml')), body = doc.getElementsByTagNameNS(W, 'body')[0];
     const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const kid = (n, name) => [...n.childNodes].find(c => c.localName === name);
-    const on = (rPr, name) => { const e = rPr && kid(rPr, name); return !!e && !/^(0|false|none)$/.test(e.getAttributeNS(W, 'val') || ''); };
-    const out = []; let list = false;
+    const kid = (n, name) => n && [...n.childNodes].find(c => c.localName === name);
+    const val = (n, name) => { const e = kid(n, name); return e ? e.getAttributeNS(W, 'val') : null; };
+    const on = (rPr, name) => { const e = kid(rPr, name); return !!e && !/^(0|false|none)$/.test(e.getAttributeNS(W, 'val') || ''); };
+    // taille par défaut : style « Normal », sinon 12 pt
+    let defSz = 12; const styles = {};
+    try { const st = xml(await z.text('word/styles.xml'));
+      // espacements, taille et « espacement contextuel » de chaque style de paragraphe
+      for (const sn of st.getElementsByTagNameNS(W, 'style')) { const pPr = kid(sn, 'pPr'), rPr = kid(sn, 'rPr'), sp = kid(pPr, 'spacing'), at = k => sp && sp.getAttributeNS(W, k);
+        styles[sn.getAttributeNS(W, 'styleId')] = {before: sp ? (/^(1|true)$/.test(at('beforeAutospacing')) ? 14 : (+at('before') || 0) / 20) : null, after: sp ? (/^(1|true)$/.test(at('afterAutospacing')) ? 14 : (+at('after') || 0) / 20) : null, autoAfter: !!sp && /^(1|true)$/.test(at('afterAutospacing')), sz: val(rPr, 'sz') ? +val(rPr, 'sz') / 2 : null, ctx: !!kid(pPr, 'contextualSpacing')}; } const dd = st.getElementsByTagNameNS(W, 'docDefaults')[0]; const sz = dd && dd.getElementsByTagNameNS(W, 'sz')[0]; if (sz) defSz = +sz.getAttributeNS(W, 'val') / 2;
+      for (const sn of st.getElementsByTagNameNS(W, 'style')) if (sn.getAttributeNS(W, 'styleId') === 'Normal') { const s2 = sn.getElementsByTagNameNS(W, 'sz')[0]; if (s2) defSz = +s2.getAttributeNS(W, 'val') / 2; } } catch (e) { /* pas de styles */ }
+    const out = []; let list = false, pendingAfter = 0, prevStyle = null, autoPrev = false;
     const para = p => {
-      const pPr = kid(p, 'pPr'), jc = pPr && kid(pPr, 'jc'), al = jc ? jc.getAttributeNS(W, 'val') : '';
-      const style = pPr && kid(pPr, 'pStyle') ? kid(pPr, 'pStyle').getAttributeNS(W, 'val') : '';
-      const isLi = !!(pPr && kid(pPr, 'numPr')) || /list|liste/i.test(style);
-      let html = '', plain = '';
-      // Word découpe souvent un mot en plusieurs morceaux de même mise en forme : on les recolle avant de les baliser
-      const segs = [];
+      const pPr = kid(p, 'pPr'), al = val(pPr, 'jc') || '';
+      const style = val(pPr, 'pStyle') || '', isLi = !!kid(pPr, 'numPr') || /list|liste/i.test(style);
+      const S = styles[style] || {}, ctx = (S.ctx || !!kid(pPr, 'contextualSpacing')) && style && style === prevStyle;
+      const pSz = (() => { const r = kid(pPr, 'rPr'), v = val(r, 'sz'); return v ? +v / 2 : S.sz || defSz; })();
+      const sp = kid(pPr, 'spacing'), num = (k, d) => sp && sp.hasAttributeNS(W, k) ? (+sp.getAttributeNS(W, k) || 0) / 20 : (d ?? 0);
+      let before = num('before', S.before), after = num('after', S.after);
+      if (autoPrev) { before = Math.max(before, pendingAfter); pendingAfter = 0; }   // espacement « auto » (style web) : Word ne cumule pas
+      if (ctx) { before = 0; pendingAfter = 0; }   // espacement contextuel : rien entre deux paragraphes du même style (listes)
+      prevStyle = style; autoPrev = !!S.autoAfter && !(sp && sp.hasAttributeNS(W, 'after'));
+      const bdr = kid(pPr, 'pBdr'), bottom = bdr && kid(bdr, 'bottom') && kid(bdr, 'bottom').getAttributeNS(W, 'val') !== 'none';
+      const ind = kid(pPr, 'ind'), indL = ind ? (+(ind.getAttributeNS(W, 'left') || ind.getAttributeNS(W, 'start')) || 0) / 20 : 0;
+      // morceaux de même mise en forme recollés ; espaces et tabulations de début convertis en retrait
+      const segs = []; let lead = 0, started = false, plain = '';
       for (const r of p.getElementsByTagNameNS(W, 'r')) {
-        const rPr = kid(r, 'rPr'); let t = '';
-        for (const c of r.childNodes) { if (c.localName === 't') t += esc(c.textContent); else if (c.localName === 'tab') t += '\t'; else if (c.localName === 'br') t += '<br>'; }
+        const rPr = kid(r, 'rPr'), sz = val(rPr, 'sz') ? +val(rPr, 'sz') / 2 : pSz; let t = '';
+        for (const c of r.childNodes) {
+          if (c.localName === 't') { let x = c.textContent; if (!started) { const m = /^[  ]*/.exec(x)[0]; lead += m.length * sz * .25; x = x.slice(m.length); if (x) started = true; } t += esc(x); }
+          else if (c.localName === 'tab') { if (!started) lead += 35.4; else t += ' '; }
+          else if (c.localName === 'br') t += '<br>';
+        }
         if (!t) continue; plain += t;
-        const f = {b: on(rPr, 'b'), i: on(rPr, 'i'), u: !!(rPr && kid(rPr, 'u') && kid(rPr, 'u').getAttributeNS(W, 'val') !== 'none')}, last = segs.at(-1);
-        // une espace seule prend la mise en forme de ses voisins
-        if (last && (last.b === f.b && last.i === f.i && last.u === f.u || /^\s+$/.test(t))) last.t += t; else segs.push({...f, t});
+        const f = {b: on(rPr, 'b'), i: on(rPr, 'i'), u: !!(kid(rPr, 'u') && kid(rPr, 'u').getAttributeNS(W, 'val') !== 'none'), sz, color: val(rPr, 'color')}, last = segs.at(-1);
+        if (last && ((last.b === f.b && last.i === f.i && last.u === f.u && last.sz === f.sz && last.color === f.color) || /^\s+$/.test(t))) last.t += t; else segs.push({...f, t});
       }
-      for (const g of segs) { let t = g.t; if (g.b) t = `<b>${t}</b>`; if (g.i) t = `<i>${t}</i>`; if (g.u) t = `<u>${t}</u>`; html += t; }
-      let align = {both: 'justify', center: 'center', right: 'right', end: 'right'}[al] || '';
-      if (/^[\t ]{6,}\S/.test(plain) || /^\s*\t{2,}/.test(plain)) align = 'right';   // poussé à droite par des tabulations
-      html = html.replace(/^(\s|\t|<[biu]>)*?[\t ]+/, m => m.replace(/[\t ]+/g, '')).replace(/\t+/g, ' ').trim();
-      const st = align ? ` style="text-align:${align}"` : '';
-      if (isLi) { if (!list) { out.push('<ul>'); list = true; } out.push(`<li${st}>${html || '<br>'}</li>`); return; }
+      let html = '';
+      for (const g of segs) { let t = g.t; if (g.b) t = `<b>${t}</b>`; if (g.i) t = `<i>${t}</i>`; if (g.u) t = `<u>${t}</u>`;
+        const css = [g.sz && g.sz !== pSz ? `font-size:${g.sz}pt` : '', g.color && g.color !== 'auto' && g.color !== '000000' ? `color:#${g.color}` : ''].filter(Boolean).join(';');
+        html += css ? `<span style="${css}">${t}</span>` : t; }
+      html = html.trim();
+      const align = {both: 'justify', center: 'center', right: 'right', end: 'right'}[al] || '';
+      const css = [align && `text-align:${align}`, `font-size:${pSz}pt`, (before + pendingAfter) ? `margin-top:${before + pendingAfter}pt` : '', (indL + (align === 'center' || align === 'right' ? 0 : lead)) ? `margin-left:${Math.round(indL + (align === 'center' || align === 'right' ? 0 : lead))}pt` : '', bottom ? 'border-bottom:1px solid #000' : ''].filter(Boolean).join(';');
+      pendingAfter = after;
+      if (isLi) { if (!list) { out.push('<ul>'); list = true; } out.push(`<li style="${css}">${html || '<br>'}</li>`); return; }
       if (list) { out.push('</ul>'); list = false; }
-      out.push(`<p${st}>${html || '<br>'}</p>`);
+      out.push(`<p style="${css}">${html || '<br>'}</p>`);
     };
     for (const n of body.childNodes) {
       if (n.localName === 'p') para(n);
       else if (n.localName === 'tbl') for (const p of n.getElementsByTagNameNS(W, 'p')) para(p);
     }
     if (list) out.push('</ul>');
-    return out.join('\n');
+    // marge de la page (gauche) reprise du document
+    const mar = body.getElementsByTagNameNS(W, 'pgMar')[0], tw = (k, d) => Math.round((+mar.getAttributeNS(W, k) || d) / 20);
+    while (/^<p[^>]*><br><\/p>$/.test(out[0] || '')) out.shift();   // lignes vides du haut : la marge suffit
+    return (mar ? `<div data-serre data-marge="${tw('left', 1134)}" data-marge-haut="${Math.max(28, tw('top', 1134))}">` : '<div data-serre>') + out.join('\n') + '</div>';
   }
 
   /* ---------- Mise en page d'un document (organigrammes) ----------
