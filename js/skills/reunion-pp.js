@@ -93,7 +93,16 @@ App.reunionPP = (() => {
     const imgs = [...all.matchAll(/src="(data:image\/(?:png|jpe?g);base64,[^"]+)"/g)].map(m => m[1]);
     return imgs.sort((a, b) => b.length - a.length)[0] || '';   // la plus grande image : la signature
   }
-  function styleLetter(html) {
+  // Présentations proposées pour les lettres aux orateurs
+  const PRESENTATIONS = {
+    officielle: {label: 'Officielle (votre modèle)', head: 'text-align:right;font-weight:bold;font-size:10pt;border-bottom:1px solid #000', objet: 'color:#c00000;font-weight:bold;font-size:13pt', partie: 'color:#c00000', box: 'text-align:center;font-weight:bold;background-color:#dbe5f1;border:1px solid #000'},
+    sobre: {label: 'Sobre (noir et blanc)', head: 'text-align:right;font-weight:bold;font-size:10pt;border-bottom:1px solid #000', objet: 'font-weight:bold;font-size:12pt', partie: '', box: 'text-align:center;font-weight:bold;border:1px solid #000'},
+    moderne: {label: 'Moderne (bleu)', head: 'text-align:right;font-weight:bold;font-size:10.5pt;color:#1f4e79;border-bottom:1px solid #1f4e79', objet: 'color:#1f4e79;font-weight:bold;font-size:14pt', partie: 'color:#1f4e79', box: 'text-align:center;font-weight:bold;color:#1f4e79;background-color:#e8f0fa;border:1px solid #1f4e79'},
+    classique: {label: 'Classique (sans couleur, objet souligné)', head: 'text-align:right;font-weight:bold;font-size:10pt', objet: 'font-weight:bold;font-size:12pt;text-decoration:underline', partie: 'font-style:italic', box: 'text-align:center;font-style:italic;font-weight:bold'},
+    verte: {label: 'Verte', head: 'text-align:right;font-weight:bold;font-size:10pt;color:#2e6b30;border-bottom:1px solid #2e6b30', objet: 'color:#2e6b30;font-weight:bold;font-size:13pt', partie: 'color:#2e6b30', box: 'text-align:center;font-weight:bold;background-color:#e6f2e6;border:1px solid #2e6b30'}
+  };
+  function styleLetter(html, pres) {
+    const P = PRESENTATIONS[pres] || PRESENTATIONS.officielle;
     const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html'), out = [];
     const paras = [];
     for (const el of doc.body.firstChild.children) {
@@ -108,19 +117,19 @@ App.reunionPP = (() => {
       if (/^•/.test(t)) { bullets.push(h.replace(/^•\s*/, '')); return; }
       flush();
       if (!t) { out.push('<p><br></p>'); return; }
-      if (skipName && /\{\{exp_prenom\}\}/.test(t)) return;
-      if (i === 0) return out.push(`<p style="text-align:right;font-weight:bold;font-size:10pt;border-bottom:1px solid #000">${t}</p>`);
+      if (/\{\{exp_prenom\}\}/.test(t) && t.length < 40) { if (!skipName) out.push(`<p style="margin-left:110pt">${t}</p>`); return; }   // nom sous « Ton frère dans la foi » (sans signature)
+      if (i === 0) return out.push(`<p style="${P.head}">${t}</p>`);
       if (i < 3 && /@/.test(t)) return out.push(`<p style="font-size:7pt">${t}</p>`);
       if (/^Le\s+\{\{date_jour/.test(t)) return out.push('<p style="text-align:right;margin-right:40pt">Le {{date_jour_complet}}</p>');
-      if (/^Objet\s*:/i.test(t)) return out.push(`<p style="color:#c00000;font-weight:bold;font-size:13pt">${t}</p>`);
+      if (/^Objet\s*:/i.test(t)) return out.push(`<p style="${P.objet}">${t}</p>`);
       if (/^(À\s*:\s*)?(F\.|Frère)\s*\{\{prenom\}\}/.test(t)) return out.push('<p><b>Frère {{prenom}} {{nom}}</b></p>');
       if (t === '{{rp_date}}') return out.push('<p><b>{{rp_date}}</b></p>');
       if (t === '{{rp_theme}}') return out.push('<p style="text-align:center"><b>{{rp_theme}}</b></p>');
       if (t === '{{rp_discours}}') return out.push('<p><b>{{rp_discours}}</b></p>');
-      if (t === '{{rp_partie}}') return out.push('<p style="color:#c00000"><b>{{rp_partie}}</b></p>');
+      if (t === '{{rp_partie}}') return out.push(`<p${P.partie ? ` style="${P.partie}"` : ''}><b>{{rp_partie}}</b></p>`);
       if (/^Préparation personnelle\s*:/i.test(t)) return out.push(`<p><b>Préparation personnelle :</b>${h.replace(/^(<[^>]+>)*Préparation personnelle\s*:(<\/[^>]+>)*/i, '')}</p>`);
       if (/^Une répétition est prévue/i.test(t)) return out.push(`<p><b>Une répétition</b> est prévue : <b>${t.replace(/^Une répétition est prévue\s*:?\s*/i, '')}</b></p>`);
-      if (/^Je te remercie de me confirmer/i.test(t)) return out.push(`<p style="text-align:center;font-weight:bold;background-color:#dbe5f1;border:1px solid #000">${t}</p>`);
+      if (/^Je te remercie de me confirmer/i.test(t)) return out.push(`<p style="${P.box}">${t}</p>`);
       if (/^(Ton frère|Ta sœur) dans la foi/i.test(t)) { skipName = !!sig; return out.push(`<p style="margin-left:110pt">${t}${sig ? ` <img src="${sig}" style="width:170pt">` : ''}</p>`); }
       out.push(`<p${/text-align:center/.test(paras[i] || '') ? ' style="text-align:center"' : ''}>${h}</p>`);
     });
@@ -144,7 +153,7 @@ App.reunionPP = (() => {
       out.push(`<p${right ? ' style="text-align:right"' : center ? ' style="text-align:center"' : ''}>${esc}</p>`);
       if (/^Ton frère|^Ta sœur/i.test(t)) out.push('<p style="text-align:right">{{exp_prenom}} {{exp_nom}}</p>');
     });
-    return styleLetter(tidy(fieldify(out.join('\n'), R)));
+    return styleLetter(tidy(fieldify(out.join('\n'), R)), R.presentation);
   }
 
   /* ---------- Import du classeur « Publipostage Réunion PP » ---------- */
@@ -406,7 +415,7 @@ App.reunionPP = (() => {
     for (const it of R.items) if (['discours', 'partie'].includes(it.type) && !L.includes(it)) it.repet = '';
     return L.length;
   }
-  return {styleLetter, signature, aRepeter, planRepet, PTYPES, partsOf, partLabel, partText, statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
+  return {PRESENTATIONS, styleLetter, signature, aRepeter, planRepet, PTYPES, partsOf, partLabel, partText, statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
 })();
 
 App.registerSkill({
@@ -435,7 +444,7 @@ App.registerSkill({
     }
     R.items ??= []; R.lettres ??= {}; R.exclus ??= []; R.ajouts ??= [];
     // lettres importées avant la mise en forme : présentation appliquée une fois
-    for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k] && !R.lettres[k].includes('<!--mf1-->')) { R.lettres[k] = X.styleLetter(R.lettres[k]); api.save(); }
+    for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k] && !R.lettres[k].includes('<!--mf1-->')) { R.lettres[k] = X.styleLetter(R.lettres[k], R.presentation); api.save(); }
     const {rows, fin} = X.timed(R), groups = X.groupsOf(R), pio = X.pionniers(R);
     const asmCount = [...new Set(pio.map(p => p.asm))].map(a => [a, pio.filter(p => p.asm === a)]);
     const persons = api.data.persons;
@@ -481,6 +490,9 @@ App.registerSkill({
         <div class="card stack"><strong>Lettres</strong>
           ${Object.entries(X.LETTRES).map(([k, l]) => `<div class="row small"><span style="flex:1">${l} ${R.lettres[k] ? '<span class="pill ok">votre modèle</span>' : '<span class="pill">modèle neutre</span>'}</span><button class="btn" data-edit="${k}">Modifier</button></div>`).join('')}
           <div class="row"><button class="btn" id="rImpInv">Importer la lettre d’invitation (Word)…</button></div>
+          <div class="row small"><label style="flex:1;display:flex;gap:8px;align-items:center">Présentation des lettres aux orateurs
+            <select id="rPres" style="width:auto">${Object.entries(X.PRESENTATIONS).map(([k, p]) => `<option value="${k}" ${(R.presentation || 'officielle') === k ? 'selected' : ''}>${p.label}</option>`).join('')}</select></label>
+            <button class="btn" id="rApercu" title="Lettre du premier orateur, en PDF">Aperçu</button></div>
           <div class="row small"><span style="flex:1">Signature : ${X.signature() ? `<img src="${X.signature()}" style="height:32px;vertical-align:middle;background:#fff;border:1px solid var(--line);border-radius:4px">` : '<span class="muted">aucune</span>'}</span><button class="btn" id="rSig">${api.data.settings.profil?.signature ? 'Changer' : 'Importer une image'}…</button></div>
           <p class="small muted" style="margin:0">Les lettres sont produites en PDF. Les orateurs reçoivent la lettre de leur participation ; l’invitation est la même pour tous les pionniers (vous la transmettez aux CCA).</p></div>
         <div class="card stack"><strong>Pionniers invités : ${pio.length}</strong>
@@ -520,11 +532,18 @@ App.registerSkill({
       if (await X.importClasseur(R)) draw(); });
     api.$('#rImpInv', el).addEventListener('click', async () => { if (await X.importInvitation(R)) draw(); });
     api.$('#rCour', el).addEventListener('click', async () => { if (await X.importCourrier(R)) draw(); });
+    api.$('#rPres', el).addEventListener('change', e => {
+      R.presentation = e.target.value;
+      for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k]) R.lettres[k] = X.styleLetter(R.lettres[k].replace(/<!--mf1-->/, '').replace(/ ?<img src="data:image[^>]+>/, ''), R.presentation);
+      save(); api.toast(`Présentation « ${X.PRESENTATIONS[R.presentation].label} » appliquée aux lettres aux orateurs`); draw(); });
+    api.$('#rApercu', el).addEventListener('click', async () => {
+      const it = X.avecLettre(R).find(x => x.type === 'partie') || X.avecLettre(R)[0] || {type: 'partie', nom: 'EXEMPLE', prenom: 'Jean', titre: 'Titre de la partie', expose: 'Titre de l’exposé', repet: 'à 18h00'};
+      try { api.download('Aperçu - ' + X.lettreNom(R, it), new Blob([await X.lettreBytes(R, it)], {type: 'application/pdf'})); } catch (err) { api.toast('Erreur PDF : ' + err.message, 'error'); } });
     api.$('#rSig', el).addEventListener('click', async () => {
       const f = await api.pickFile('image/png,image/jpeg'); if (!f) return;
       const url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
       if (!/^data:image\/(png|jpe?g)/.test(url)) return api.toast('Image PNG ou JPG attendue.', 'error');
-      api.data.settings.profil.signature = url; for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k]) R.lettres[k] = X.styleLetter(R.lettres[k].replace(/<!--mf1-->/, '').replace(/ ?<img src="data:image[^>]+>/, ''));
+      api.data.settings.profil.signature = url; for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k]) R.lettres[k] = X.styleLetter(R.lettres[k].replace(/<!--mf1-->/, '').replace(/ ?<img src="data:image[^>]+>/, ''), R.presentation);
       api.save(); api.toast('Signature enregistrée'); draw(); });
     el.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => X.editLettre(R, b.dataset.edit, draw)));
     api.$('#rInfo', el).addEventListener('change', e => { const f = e.target.dataset.f; if (!f) return; R[f] = e.target.value.trim(); if (f === 'date') delete R.dateTexte; if (f === 'repetDate') delete R.repetTexte;
