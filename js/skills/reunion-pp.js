@@ -300,7 +300,8 @@ App.reunionPP = (() => {
   }
   async function lettreBytes(R, it) {
     const k = it.type === 'partie' ? 'partie' : it.type === 'discours' ? 'discours' : 'priere';
-    const html = App.pdf.merge(modele(R, k), App.fields.values({person: {prenom: it.prenom, nom: it.nom, assemblee: it.asm, civilite: 'Frère'}, reunion: {R, item: it}}));
+    // la présentation choisie est appliquée au moment de produire la lettre (y compris aux modèles neutres ou modifiés)
+    const html = App.pdf.merge(styleLetter(modele(R, k).replace(/<!--mf1-->/, '').replace(/ ?<img src="data:image[^>]+>/, ''), R.presentation), App.fields.values({person: {prenom: it.prenom, nom: it.nom, assemblee: it.asm, civilite: 'Frère'}, reunion: {R, item: it}}));
     return onePage(html, `Réunion des pionniers — ${nomOf(it)}`);
   }
   const lettreNom = (R, it) => App.pdf.fileName(`Réunion PP ${R.annee || ''} - ${it.plan ? it.plan + ' - ' : ''}${it.nom} ${it.prenom}`) + '.pdf';

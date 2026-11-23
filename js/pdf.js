@@ -103,7 +103,7 @@ App.pdf = (() => {
     function blockStyle(el) { const st = el.style || {};
       // cadre complet (border: 1px solid …) : paragraphe encadré
       const box = /solid|double/.test(st.borderTopStyle || '') && /solid|double/.test(st.borderLeftStyle || '') ? (colorOf(st.borderTopColor) || [0, 0, 0]) : null;
-      return {box, bg: colorOf(st.backgroundColor), rule: !box && /solid|double/.test(st.borderBottom || st.borderBottomStyle || ''), before: toPt(st.marginTop), ind: toPt(st.marginLeft) + toPt(st.paddingLeft), size: st.fontSize ? toPt(st.fontSize) : 0}; }
+      return {box, bg: colorOf(st.backgroundColor), rule: !box && /solid|double/.test(st.borderBottom || st.borderBottomStyle || ''), ruleColor: colorOf(st.borderBottomColor), before: toPt(st.marginTop), ind: toPt(st.marginLeft) + toPt(st.paddingLeft), size: st.fontSize ? toPt(st.fontSize) : 0}; }
     function walk(node, ind, dsz = 11) {
       for (const ch of [...node.childNodes]) {
         if (ch.nodeType === 1 && (ch.tagName === 'UL' || ch.tagName === 'OL')) {
@@ -122,7 +122,7 @@ App.pdf = (() => {
           if (hasBlockChild) { const start = blocks.length; walk(ch, ind + bs.ind, bs.size || dsz); if (bs.bg) for (const b of blocks.slice(start)) b.bg ??= bs.bg; continue; }
           const runs = []; collect(ch, ch.tagName.startsWith('H') ? {bold: true} : {}, runs);
           const size = bs.size || (ch.tagName === 'H1' ? 18 : ch.tagName === 'H2' ? 15 : ch.tagName === 'H3' ? 12.5 : dsz);
-          blocks.push({align: alignOf(ch), size, runs, indent: ind + bs.ind, bg: bs.bg, box: bs.box, rule: bs.rule, before: bs.before});
+          blocks.push({align: alignOf(ch), size, runs, indent: ind + bs.ind, bg: bs.bg, box: bs.box, rule: bs.rule, ruleColor: bs.ruleColor, before: bs.before});
         } else {
           const runs = []; collect(ch, {}, runs);
           if (runs.some(r => r.br || r.img || (r.text && r.text.trim()))) blocks.push({align: 'left', size: dsz, runs, indent: ind});
@@ -199,7 +199,7 @@ App.pdf = (() => {
         });
         y -= lh;
       }
-      if (blk.rule) page.drawLine({start: {x: M + indent, y: y + size * .1}, end: {x: M + indent + width, y: y + size * .1}, thickness: .8, color: col()});
+      if (blk.rule) page.drawLine({start: {x: M + indent, y: y + size * .1}, end: {x: M + indent + width, y: y + size * .1}, thickness: .8, color: col(blk.ruleColor)});
       y -= size * 0.45; // espace après le paragraphe
     }
     return doc.save();
