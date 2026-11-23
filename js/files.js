@@ -649,6 +649,48 @@ App.files = (() => {
     return sheets;
   }
 
+  /* ---------- Document Word → HTML simple (modèles de lettres) ----------
+     Paragraphes avec alignement, gras, italique, souligné, listes à puces, retours à la ligne.
+     Un paragraphe poussé à droite par des tabulations (signature) est aligné à droite. */
+  async function docxToHtml(file) {
+    const z = await unzip(await file.arrayBuffer()), W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const doc = xml(await z.text('word/document.xml')), body = doc.getElementsByTagNameNS(W, 'body')[0];
+    const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const kid = (n, name) => [...n.childNodes].find(c => c.localName === name);
+    const on = (rPr, name) => { const e = rPr && kid(rPr, name); return !!e && !/^(0|false|none)$/.test(e.getAttributeNS(W, 'val') || ''); };
+    const out = []; let list = false;
+    const para = p => {
+      const pPr = kid(p, 'pPr'), jc = pPr && kid(pPr, 'jc'), al = jc ? jc.getAttributeNS(W, 'val') : '';
+      const style = pPr && kid(pPr, 'pStyle') ? kid(pPr, 'pStyle').getAttributeNS(W, 'val') : '';
+      const isLi = !!(pPr && kid(pPr, 'numPr')) || /list|liste/i.test(style);
+      let html = '', plain = '';
+      // Word découpe souvent un mot en plusieurs morceaux de même mise en forme : on les recolle avant de les baliser
+      const segs = [];
+      for (const r of p.getElementsByTagNameNS(W, 'r')) {
+        const rPr = kid(r, 'rPr'); let t = '';
+        for (const c of r.childNodes) { if (c.localName === 't') t += esc(c.textContent); else if (c.localName === 'tab') t += '\t'; else if (c.localName === 'br') t += '<br>'; }
+        if (!t) continue; plain += t;
+        const f = {b: on(rPr, 'b'), i: on(rPr, 'i'), u: !!(rPr && kid(rPr, 'u') && kid(rPr, 'u').getAttributeNS(W, 'val') !== 'none')}, last = segs.at(-1);
+        // une espace seule prend la mise en forme de ses voisins
+        if (last && (last.b === f.b && last.i === f.i && last.u === f.u || /^\s+$/.test(t))) last.t += t; else segs.push({...f, t});
+      }
+      for (const g of segs) { let t = g.t; if (g.b) t = `<b>${t}</b>`; if (g.i) t = `<i>${t}</i>`; if (g.u) t = `<u>${t}</u>`; html += t; }
+      let align = {both: 'justify', center: 'center', right: 'right', end: 'right'}[al] || '';
+      if (/^[\t ]{6,}\S/.test(plain) || /^\s*\t{2,}/.test(plain)) align = 'right';   // poussé à droite par des tabulations
+      html = html.replace(/^(\s|\t|<[biu]>)*?[\t ]+/, m => m.replace(/[\t ]+/g, '')).replace(/\t+/g, ' ').trim();
+      const st = align ? ` style="text-align:${align}"` : '';
+      if (isLi) { if (!list) { out.push('<ul>'); list = true; } out.push(`<li${st}>${html || '<br>'}</li>`); return; }
+      if (list) { out.push('</ul>'); list = false; }
+      out.push(`<p${st}>${html || '<br>'}</p>`);
+    };
+    for (const n of body.childNodes) {
+      if (n.localName === 'p') para(n);
+      else if (n.localName === 'tbl') for (const p of n.getElementsByTagNameNS(W, 'p')) para(p);
+    }
+    if (list) out.push('</ul>');
+    return out.join('\n');
+  }
+
   /* ---------- Mise en page d'un document (organigrammes) ----------
      Renvoie des pages de « cellules » positionnées : {x, y, w, h, text}, y croissant vers le bas.
      PDF : morceaux de texte regroupés par ligne ; Excel : une cellule = une case de la grille ;
@@ -733,5 +775,5 @@ App.files = (() => {
     return new Blob([...parts, ...central, new Uint8Array(end.buffer)], {type: 'application/zip'});
   }
 
-  return {readTable, readXlsx, readCsv, readPdf, readLayout, readS21, zip, unzip, telsIn, datesIn, _tests: {readBlocs, nameIn, telsIn, splitAdresse, pdfItems}};
+  return {readTable, readXlsx, readCsv, readPdf, readLayout, readS21, docxToHtml, zip, unzip, telsIn, datesIn, _tests: {readBlocs, nameIn, telsIn, splitAdresse, pdfItems}};
 })();

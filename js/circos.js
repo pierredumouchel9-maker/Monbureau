@@ -5,7 +5,7 @@
    en changer range l'active et ressort l'autre, sans rien perdre. Leurs photos restent dans le même coffre de photos,
    sous des clés « arch:<id>:<personne> ». Le profil, les modèles de courriers, le coffre et les réglages sont communs. */
 App.circoArchive = (() => {
-  const api = App.api, MODS = ['circonscription', 'itineraire', 'territoires'], SIX_MOIS = 182 * 864e5;
+  const api = App.api, MODS = ['circonscription', 'itineraire', 'territoires', 'reunionpp'], SIX_MOIS = 182 * 864e5;
   const list = () => (api.data.circos ??= []);
   const active = () => { const c = (api.data.settings.circo ??= {code: '', nom: ''}); c.id ??= api.uid(); return c; };
   const label = c => [c.code, c.nom].filter(Boolean).join(' — ') || 'Circonscription sans nom';
