@@ -24,6 +24,19 @@ App.reunionPP = (() => {
   const longDate = iso => { if (!iso) return ''; const t = new Date(iso + 'T00:00').toLocaleDateString('fr-FR', {weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'}); return t.charAt(0).toUpperCase() + t.slice(1); };
   const isoOf = txt => { const d = App.files.datesIn(String(txt || ''))[0]; if (!d) return ''; const [j, m, y] = d.split('/'); return `${y}-${m}-${j}`; };
   const nomOf = it => [it.prenom, (it.nom || '').toUpperCase()].filter(Boolean).join(' ');
+  // Participations d'un sujet (plusieurs possibles : deux interviews, une interview puis une démonstration…)
+  const PTYPES = ['Interview', 'Démonstration', 'Expérience', 'Témoignage', 'Sketch', 'Autre'];
+  const PLUR = {Interview: 'interviews', 'Démonstration': 'démonstrations', 'Expérience': 'expériences', 'Témoignage': 'témoignages', Sketch: 'sketchs', Autre: 'participations'};
+  const NB = ['', '', 'Deux', 'Trois', 'Quatre', 'Cinq'];
+  const partsOf = it => { if (!it.parts && it.participation) it.parts = [{type: 'Autre', libre: it.participation}]; return (it.parts ??= []); };
+  const partLabel = x => x.libre || `${x.type}${x.duree ? ` (${x.duree} min${x.note ? ', ' + x.note : ''})` : x.note ? ` (${x.note})` : ''}`;
+  function partText(parts) {   // « Deux interviews (3 min) + Démonstration (2 min) »
+    const out = [];
+    for (let i = 0; i < parts.length; i++) { const x = parts[i]; if (x.libre || x.note) { out.push(partLabel(x)); continue; }
+      let n = 1; while (parts[i + n] && !parts[i + n].libre && !parts[i + n].note && parts[i + n].type === x.type && parts[i + n].duree === x.duree) n++;
+      out.push(n > 1 ? `${NB[n] || n} ${PLUR[x.type] || x.type.toLowerCase()}${x.duree ? ` (${x.duree} min)` : ''}` : partLabel(x)); i += n - 1; }
+    return out.join(' + ');
+  }
 
   // Horaires : chaque élément commence à la fin du précédent (prière et éléments sans durée n'avancent pas l'horloge)
   function timed(R) {
@@ -138,6 +151,7 @@ App.reunionPP = (() => {
     }
     if (!items.length) for (const p of people) { if (p.disc) items.push(take(p, {type: 'discours', titre: p.disc, duree: 15})); else if (p.part) items.push(take(p, {type: 'partie', expose: p.exp, titre: p.part, duree: 15})); else if (/intro/i.test(p.pri)) items.unshift(take(p, {type: 'priere', titre: 'Prière', duree: 0})); }
     if (items.length) R.items = items;
+    { const first = items.map(it => toMin(it.repet)).filter(t => t !== null).sort((a, b) => a - b)[0]; if (first != null) R.repetDebut = `${String(Math.floor(first / 60)).padStart(2, '0')}:${String(first % 60).padStart(2, '0')}`; }
     // Lettres aux orateurs (onglets du classeur), avec les informations remplacées par des champs
     R.lettres ??= {};
     for (const [k, n] of [['priere', 'Prière'], ['discours', 'Discours'], ['partie', 'Discours en plusieurs parties']]) { const s2 = sh(n); if (s2) R.lettres[k] = sheetToHtml(s2.rows, R); }
@@ -186,7 +200,7 @@ App.reunionPP = (() => {
     // orateurs déjà attribués : repris si le même titre revient
     const keep = new Map(R.items.filter(x => x.nom).map(x => [N(x.titre), x]));
     R.items = prog.items.map(it => { const o = keep.get(N(it.titre)); return {id: api.uid(), expose: '', nom: '', prenom: '', asm: '', participation: '', repet: '', auditoire: false, retour: false, plan: '',
-      ...(o && it.type !== 'cantique' && it.type !== 'pause' ? {nom: o.nom, prenom: o.prenom, asm: o.asm, participation: o.participation, repet: o.repet, auditoire: o.auditoire, retour: o.retour, plan: o.plan} : {}), ...it}; });
+      ...(o && it.type !== 'cantique' && it.type !== 'pause' ? {nom: o.nom, prenom: o.prenom, asm: o.asm, participation: o.participation, parts: o.parts, repet: o.repet, auditoire: o.auditoire, retour: o.retour, plan: o.plan} : {}), ...it}; });
     // numéros de plan, dans l'ordre (comme le classeur : Plan 1, Plan 2…)
     let n = 0; for (const it of R.items) if (['discours', 'partie'].includes(it.type)) it.plan = `Plan ${++n}`;
     if (prog.theme) R.theme = prog.theme; if (prog.annee) R.annee = prog.annee;
@@ -314,7 +328,18 @@ App.reunionPP = (() => {
     R.lettres ??= {}; if (r === 'reset') delete R.lettres[k]; else R.lettres[k] = r;
     api.save(); redraw();
   }
-  return {statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
+  // Répétitions : un créneau (10 min par défaut) par sujet qui a une interview ou une démonstration, dans l'ordre du programme,
+  // à partir de l'heure de la première répétition (ou d'un sujet donné, dont l'heure vient d'être changée)
+  const aRepeter = R => R.items.filter(it => ['discours', 'partie'].includes(it.type) && it.nom && partsOf(it).length);
+  function planRepet(R, from) {
+    const L = aRepeter(R), pas = Number(R.repetPas) || 10; let k0 = 0, t0 = toMin(R.repetDebut);
+    if (from) { const k = L.indexOf(from), t = toMin(from.repet); if (k >= 0 && t !== null) { k0 = k; t0 = t; if (k === 0) R.repetDebut = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; } }
+    if (t0 === null) return 0;
+    L.slice(k0).forEach((it, j) => { it.repet = `à ${fmtH(t0 + j * pas)}`; });
+    for (const it of R.items) if (['discours', 'partie'].includes(it.type) && !L.includes(it)) it.repet = '';
+    return L.length;
+  }
+  return {aRepeter, planRepet, PTYPES, partsOf, partLabel, partText, statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
 })();
 
 App.registerSkill({
@@ -376,6 +401,8 @@ App.registerSkill({
           <strong class="small">Répétitions</strong>
           <div class="form-grid">
             <label class="field"><span>Date</span><input type="date" data-f="repetDate" value="${api.esc(R.repetDate || '')}"></label>
+            <label class="field"><span>Première répétition</span><input type="time" data-f="repetDebut" value="${api.esc(R.repetDebut || '')}"></label>
+            <label class="field"><span>Durée par orateur (min)</span><input type="number" min="5" max="60" data-f="repetPas" value="${api.esc(R.repetPas || 10)}"></label>
             <label class="field"><span>Lieu</span>${inp('repetLieu', R.repetLieu)}</label>
             <label class="field"><span>N° Zoom</span>${inp('zoom', R.zoom)}</label>
             <label class="field"><span>Code secret</span>${inp('code', R.code)}</label>
@@ -391,7 +418,7 @@ App.registerSkill({
           <p class="small muted" style="margin:0">D’après le statut du dernier cycle de chaque assemblée (Circonscription), à défaut la fiche S-21. Déménagements et décès exclus.</p></div>
       </div>
       <div class="card stack" style="margin-top:12px"><div class="row"><strong style="flex:1">Programme et orateurs</strong><span class="small muted">De ${X.fmtH(X.toMin(R.debut) ?? 570)} à ${X.fmtH(fin)} · Retours : ${R.items.filter(x => x.nom && x.retour && !X.isMe(x) && x.type !== 'cantique').length} / ${R.items.filter(x => x.nom && !X.isMe(x) && ['priere', 'discours', 'partie'].includes(x.type)).length} orateur(s) ont confirmé</span></div>
-        <div class="table-wrap"><table class="list" id="rTab"><tr><th>Heure</th><th>Type</th><th>Titre</th><th>Min.</th><th>Orateur</th><th title="Cochez quand l’orateur a confirmé qu’il sera présent et accepte de présenter son sujet">Retours</th><th>Assemblée</th><th>Interview / démonstration</th><th title="Participation de l’auditoire">Aud.</th><th>Répétition</th><th></th></tr>
+        <div class="table-wrap"><table class="list" id="rTab"><tr><th>Heure</th><th>Type</th><th>Titre</th><th>Min.</th><th>Orateur</th><th title="Cochez quand l’orateur a confirmé qu’il sera présent et accepte de présenter son sujet">Retours</th><th>Assemblée</th><th>Interviews / démonstrations</th><th title="Participation de l’auditoire">Aud.</th><th>Répétition</th><th></th></tr>
         ${rows.map(({it, h}, i) => { const g = groups[it.id];
           return `<tr data-i="${i}" ${it.type === 'pause' ? 'style="background:var(--bg2,#f3f5f8)"' : ''}>
           <td style="white-space:nowrap;font-weight:600">${h === null ? '' : X.fmtH(h)}</td>
@@ -401,14 +428,13 @@ App.registerSkill({
           <td>${it.type === 'pause' ? '' : `<input type="text" data-c="orateur" list="rPers" value="${api.esc([(it.nom || '').toUpperCase(), it.prenom].filter(Boolean).join(' '))}" placeholder="Ancien : NOM Prénom" style="min-width:140px${pasAncien(it) ? ';border-color:var(--warn);background:#fff8e6' : ''}">${pasAncien(it) ? '<div class="small" style="color:var(--warn)">⚠ pas ancien dans l’annuaire</div>' : ancienOf(it) && !X.isMe(it) && !pioSt(ancienOf(it)) ? '<div class="small muted">ni PP ni PS</div>' : ancienOf(it) && pioSt(ancienOf(it)) ? `<div class="small" style="color:var(--ok,#2e7d32)">${pioSt(ancienOf(it))}</div>` : ''}`}</td>
           <td style="white-space:nowrap">${['priere', 'discours', 'partie'].includes(it.type) && !X.isMe(it) ? `<label class="small" title="L’orateur sera présent et accepte de présenter ce sujet" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;${it.retour ? 'color:var(--ok,#2e7d32);font-weight:600' : ''}"><input type="checkbox" data-c="retour" ${it.retour ? 'checked' : ''} ${it.nom ? '' : 'disabled'} style="width:18px;height:18px">${it.retour ? 'Accepte' : 'En attente'}</label>` : ''}</td>
           <td>${it.type === 'pause' ? '' : `<input type="text" data-c="asm" value="${api.esc(it.asm || '')}" style="min-width:90px">`}</td>
-          <td>${['discours', 'partie'].includes(it.type) ? `<input type="text" data-c="participation" list="rPart" value="${api.esc(it.participation || '')}" style="min-width:130px">` : ''}</td>
+          <td style="min-width:150px">${['discours', 'partie'].includes(it.type) ? `${X.partsOf(it).map((x, k) => `<span class="pill" style="display:inline-flex;gap:4px;align-items:center;margin:0 4px 4px 0">${api.esc(X.partLabel(x))}<a href="#" data-pdel="${k}" title="Retirer" style="color:var(--danger);text-decoration:none">✕</a></span>`).join('')}<button class="btn" data-padd style="padding:2px 8px;font-size:12px">+ Ajouter</button>` : ''}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="checkbox" data-c="auditoire" ${it.auditoire ? 'checked' : ''}>` : ''}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="text" data-c="repet" value="${api.esc(it.repet || '')}" placeholder="à 18h00" style="width:80px">` : ''}</td>
           
           <td style="white-space:nowrap"><button class="btn" data-up title="Monter">↑</button><button class="btn" data-down title="Descendre">↓</button>${['priere', 'discours', 'partie'].includes(it.type) && it.nom && !X.isMe(it) ? `<button class="btn" data-pdf title="Lettre de ${api.esc(X.nomOf(it))} (PDF)">📄</button>` : ''}<button class="btn" data-del title="Supprimer">✕</button></td></tr>`; }).join('')}
         </table></div>
         <datalist id="rPers">${moi ? `<option value="${api.esc(moi.nom + ' ' + moi.prenom)}">Responsable de circonscription${code ? ' (RC ' + api.esc(code) + ')' : ''}</option>` : ''}${anciens.filter(p => !moi || api.norm(p.nom + ' ' + p.prenom) !== api.norm(moi.nom + ' ' + moi.prenom)).map(p => `<option value="${api.esc((p.nom || '').toUpperCase() + ' ' + (p.prenom || ''))}">${pioSt(p) ? pioSt(p) + ' · ' : 'non pionnier · '}${api.esc(p.assemblee || '')}</option>`).join('')}</datalist>
-        <datalist id="rPart">${['Interview (2 min)', 'Interview (3 min)', 'Interview (4 min)', 'Deux interviews', 'Démonstration (2 min)', 'Deux démonstrations (2 min)', 'Expérience'].map(x => `<option value="${x}">`).join('')}</datalist>
         <div class="row">${Object.entries(X.TYPES).map(([k, l]) => `<button class="btn" data-addt="${k}">+ ${l}</button>`).join('')}</div>
         <p class="small muted" style="margin:0">Orateurs : ${moi ? 'vous-même (responsable de circonscription) et ' : ''}les anciens de l’annuaire (${anciens.length}, dont ${nPio} pionnier(s) PP ou PS proposés en premier) ; vos propres sujets n’ont pas de lettre. Les horaires se calculent à partir de l’heure de début et des durées. Les parties consécutives d’un même exposé sont numérotées et regroupées dans le programme. Vos propres participations n’ont pas de lettre.</p></div>`;
 
@@ -423,7 +449,9 @@ App.registerSkill({
     api.$('#rImpInv', el).addEventListener('click', async () => { if (await X.importInvitation(R)) draw(); });
     api.$('#rCour', el).addEventListener('click', async () => { if (await X.importCourrier(R)) draw(); });
     el.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => X.editLettre(R, b.dataset.edit, draw)));
-    api.$('#rInfo', el).addEventListener('change', e => { const f = e.target.dataset.f; if (!f) return; R[f] = e.target.value.trim(); if (f === 'date') delete R.dateTexte; if (f === 'repetDate') delete R.repetTexte; save(); if (['debut', 'date', 'annee'].includes(f)) draw(); });
+    api.$('#rInfo', el).addEventListener('change', e => { const f = e.target.dataset.f; if (!f) return; R[f] = e.target.value.trim(); if (f === 'date') delete R.dateTexte; if (f === 'repetDate') delete R.repetTexte;
+      if (f === 'repetDebut' || f === 'repetPas') { const n = X.planRepet(R); if (n) api.toast(`Horaires de répétition proposés pour ${n} orateur(s), toutes les ${Number(R.repetPas) || 10} min`); save(); draw(); return; }
+      save(); if (['debut', 'date', 'annee'].includes(f)) draw(); });
     const tab = api.$('#rTab', el);
     tab.addEventListener('change', e => {
       const tr = e.target.closest('tr[data-i]'); if (!tr) return; const it = R.items[+tr.dataset.i], c = e.target.dataset.c; if (!c) return;
@@ -434,13 +462,26 @@ App.registerSkill({
       else if (e.target.type === 'checkbox') it[c] = e.target.checked;
       else if (c === 'duree') it.duree = Math.max(0, Number(e.target.value) || 0);
       else it[c] = e.target.value.trim();
+      if (c === 'repet' && X.toMin(it.repet) !== null) { X.planRepet(R, it); save(); return draw(); }   // les répétitions suivantes se décalent
+      if (['orateur', 'type'].includes(c) && R.repetDebut) X.planRepet(R);
       save(); if (['type', 'duree', 'expose', 'orateur', 'retour'].includes(c)) draw();
     });
     tab.addEventListener('click', async e => {
+      const del = e.target.closest('[data-pdel]');
+      if (del) { e.preventDefault(); const it = R.items[+del.closest('tr[data-i]').dataset.i]; X.partsOf(it).splice(+del.dataset.pdel, 1); it.participation = X.partText(it.parts); if (R.repetDebut) X.planRepet(R); save(); draw(); return; }
       const b = e.target.closest('button'); const tr = e.target.closest('tr[data-i]'); if (!b || !tr) return; const i = +tr.dataset.i;
-      if (b.hasAttribute('data-up') && i > 0) { [R.items[i - 1], R.items[i]] = [R.items[i], R.items[i - 1]]; save(); draw(); }
-      if (b.hasAttribute('data-down') && i < R.items.length - 1) { [R.items[i + 1], R.items[i]] = [R.items[i], R.items[i + 1]]; save(); draw(); }
+      if (b.hasAttribute('data-up') && i > 0) { [R.items[i - 1], R.items[i]] = [R.items[i], R.items[i - 1]]; if (R.repetDebut) X.planRepet(R); save(); draw(); }
+      if (b.hasAttribute('data-down') && i < R.items.length - 1) { [R.items[i + 1], R.items[i]] = [R.items[i], R.items[i + 1]]; if (R.repetDebut) X.planRepet(R); save(); draw(); }
       if (b.hasAttribute('data-del') && await api.confirm('Supprimer', 'Supprimer cet élément du programme ?', 'Supprimer', true)) { R.items.splice(i, 1); save(); draw(); }
+      if (b.hasAttribute('data-padd')) {
+        const it = R.items[i], v = await api.modal({title: `Participation — ${it.titre || 'sujet'}`, body: `<div class="form-grid">
+          <label class="field"><span>Type</span><select id="pT">${X.PTYPES.map(t => `<option>${t}</option>`).join('')}</select></label>
+          <label class="field"><span>Durée (min)</span><input type="number" id="pD" min="0" max="30" value="3"></label>
+          <label class="field wide"><span>Précision (facultatif)</span><input type="text" id="pN" placeholder="ex. : avec un pionnier spécial, 2 personnes…"></label></div>
+          <p class="small muted">Ajoutez autant de participations que nécessaire : deux interviews, une interview puis une démonstration…</p>`,
+          actions: [{label: 'Annuler', value: null}, {label: 'Ajouter', kind: 'primary', onClick: bx => ({type: api.$('#pT', bx).value, duree: Math.max(0, Number(api.$('#pD', bx).value) || 0), note: api.$('#pN', bx).value.trim()})}]});
+        if (!v) return; X.partsOf(it).push(v); it.participation = X.partText(it.parts); if (R.repetDebut) X.planRepet(R); save(); draw(); return;
+      }
       if (b.hasAttribute('data-pdf')) { const it = R.items[i]; try { api.download(X.lettreNom(R, it), new Blob([await X.lettreBytes(R, it)], {type: 'application/pdf'})); } catch (err) { console.error(err); api.toast('Erreur PDF : ' + err.message, 'error'); } }
     });
     el.querySelectorAll('[data-addt]').forEach(b => b.addEventListener('click', () => { const t = b.dataset.addt, last = R.items.filter(x => x.type === 'partie').at(-1);
