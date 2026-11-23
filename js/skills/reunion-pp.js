@@ -258,6 +258,48 @@ App.reunionPP = (() => {
     if (prog.theme) R.theme = prog.theme; if (prog.annee) R.annee = prog.annee;
     api.save(); api.toast(`Programme ${prog.annee} rempli : ${R.items.length} élément(s)`); return true;
   }
+  /* Lettre d'orateur déjà envoyée (PDF) → modèle : le texte est repris, les informations propres à l'orateur et à la réunion
+     deviennent des champs (destinataire, date, lieu, thème, exposé, partie, répétition, Zoom). Le type est reconnu d'après le texte. */
+  async function importLettrePdf(R) {
+    const file = await api.pickFile('.pdf'); if (!file) return false;
+    let pages; try { pages = await App.files.readLayout(file); } catch (e) { api.toast('Lecture impossible : ' + e.message, 'error'); return false; }
+    const rows = [];
+    for (const c of [...(pages[0] || [])].sort((a, b) => a.y - b.y || a.x - b.x)) { const r = rows.find(r => Math.abs(r.y - c.y) < Math.max(3, c.h * .5)); r ? r.cells.push(c) : rows.push({y: c.y, h: c.h, cells: [c]}); }
+    rows.sort((a, b) => a.y - b.y);
+    const lines = rows.map(r => ({y: r.y, h: r.h, x: Math.min(...r.cells.map(c => c.x)), end: Math.max(...r.cells.map(c => c.x + (c.w || 0))), t: r.cells.sort((a, b) => a.x - b.x).map(c => c.text).join(' ').replace(/\s+/g, ' ').trim()})).filter(l => l.t);
+    // paragraphes : lignes rapprochées réunies, une ligne vide quand l'écart est grand
+    const paras = [], right = Math.max(...lines.map(l => l.end || 0)); let prev = null;
+    for (const l of lines) {
+      const gap = prev ? l.y - prev.y : 0, lh = Math.max(l.h, 8);
+      // suite du même paragraphe : ligne précédente pleine (elle va jusqu'à la marge droite) et peu d'écart
+      const cont = prev && gap < lh * 1.45 && !/^[•●⚫]/.test(l.t) && !/[:,]$/.test(prev.t) && prev.t.length > 60 && (!right || (prev.end || 0) > right * .85);
+      if (cont) paras[paras.length - 1].t += ' ' + l.t; else { if (prev && gap > lh * 1.8) paras.push({t: ''}); paras.push({t: l.t, x: l.x}); }
+      prev = l;
+    }
+    const kind = paras.some(p => /partie suivante|partie d.un exposé/i.test(p.t)) ? 'partie' : paras.some(p => /prière/i.test(p.t) && !/discours|exposé/i.test(p.t)) ? 'priere' : 'discours';
+    const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    let after = '';
+    const out = paras.map((p, i) => {
+      let t = p.t; if (!t) return '<p><br></p>';
+      const prevT = (paras.slice(0, i).reverse().find(x => x.t) || {}).t || '';
+      if (/^Le\s+(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)?\s*\d/i.test(t)) return '<p>Le {{date_jour}}</p>';
+      if (/^(Frère|Fr\.|F\.)\s+\S+/i.test(t)) { after = 'dest'; return '<p>F. {{prenom}} {{nom}}</p>'; }
+      if (after === 'dest' && App.files.datesIn(t).length) { after = 'date'; return '<p>{{rp_date}}</p>'; }
+      if (after === 'date' && /\d{5}|salle|royaume/i.test(t)) { after = ''; return '<p>{{rp_lieu}} - {{rp_adresse}}</p>'; }
+      if (/^Cher\s+\S+,?$/i.test(t)) return '<p>Cher {{prenom}},</p>';
+      if (/pour thème\s*:?$/i.test(prevT)) return '<p style="text-align:center">{{rp_theme}}</p>';
+      if (/(intitulé|discours)\s*:?$/i.test(prevT) && /^«/.test(t)) return '<p>"Discours"</p>'.replace('"Discours"', '<b>{{rp_discours}}</b>');
+      if (/partie suivante\s*:?$/i.test(prevT)) return '<p><b>{{rp_partie}}</b></p>';
+      if (/^Une répétition est prévue/i.test(t)) return '<p>Une répétition est prévue : {{rp_repet_date}} {{rp_repet_heure}}</p>';
+      if (/^[•●⚫]?\s*N°\s*Zoom/i.test(t)) return '<p>• {{rp_zoom}}</p>';
+      if (/^[•●⚫]?\s*Code secret/i.test(t)) return '<p>• {{rp_code}}</p>';
+      return `<p>${esc(t)}</p>`;
+    });
+    if (!out.some(h => /\{\{prenom\}\}/.test(h))) { api.toast('Ce PDF ne ressemble pas à une lettre d’orateur (destinataire « Frère … » introuvable).', 'error'); return false; }
+    (R.lettres ??= {})[kind] = styleLetter(tidy(out.join('\n')), R.presentation);
+    R.presentation = R.presentation || 'officielle';
+    api.save(); api.toast(`${LETTRES[kind]} : votre modèle est repris de « ${file.name} »`); return true;
+  }
   async function importInvitation(R) {
     const file = await api.pickFile('.docx,.html,.htm'); if (!file) return false;
     try {
@@ -416,7 +458,7 @@ App.reunionPP = (() => {
     for (const it of R.items) if (['discours', 'partie'].includes(it.type) && !L.includes(it)) it.repet = '';
     return L.length;
   }
-  return {PRESENTATIONS, styleLetter, signature, aRepeter, planRepet, PTYPES, partsOf, partLabel, partText, statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
+  return {importLettrePdf, PRESENTATIONS, styleLetter, signature, aRepeter, planRepet, PTYPES, partsOf, partLabel, partText, statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
 })();
 
 App.registerSkill({
@@ -444,6 +486,8 @@ App.registerSkill({
       return;
     }
     R.items ??= []; R.lettres ??= {}; R.exclus ??= []; R.ajouts ??= [];
+    // lettres absentes de cette réunion : reprises de la réunion la plus récente qui a les vôtres (sinon modèle neutre)
+    for (const k of Object.keys(X.LETTRES)) if (!R.lettres[k]) { const src = S.reunions.filter(r => r !== R && r.lettres?.[k]).at(-1); if (src) { R.lettres[k] = src.lettres[k]; api.save(); } }
     // lettres importées avant la mise en forme : présentation appliquée une fois
     for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k] && !R.lettres[k].includes('<!--mf1-->')) { R.lettres[k] = X.styleLetter(R.lettres[k], R.presentation); api.save(); }
     const {rows, fin} = X.timed(R), groups = X.groupsOf(R), pio = X.pionniers(R);
@@ -490,7 +534,7 @@ App.registerSkill({
           </div></div>
         <div class="card stack"><strong>Lettres</strong>
           ${Object.entries(X.LETTRES).map(([k, l]) => `<div class="row small"><span style="flex:1">${l} ${R.lettres[k] ? '<span class="pill ok">votre modèle</span>' : '<span class="pill">modèle neutre</span>'}</span><button class="btn" data-edit="${k}">Modifier</button></div>`).join('')}
-          <div class="row"><button class="btn" id="rImpInv">Importer la lettre d’invitation (Word)…</button></div>
+          <div class="row"><button class="btn" id="rImpLet" title="Une lettre déjà envoyée à un orateur (PDF) : son texte devient le modèle">Importer une lettre d’orateur (PDF)…</button><button class="btn" id="rImpInv">Importer la lettre d’invitation (Word)…</button></div>
           <div class="row small"><label style="flex:1;display:flex;gap:8px;align-items:center">Présentation des lettres aux orateurs
             <select id="rPres" style="width:auto">${Object.entries(X.PRESENTATIONS).map(([k, p]) => `<option value="${k}" ${(R.presentation || 'officielle') === k ? 'selected' : ''}>${p.label}</option>`).join('')}</select></label>
             <button class="btn" id="rApercu" title="Lettre du premier orateur, en PDF">Aperçu</button></div>
@@ -532,6 +576,7 @@ App.registerSkill({
       if (R.items.some(x => x.nom) && !await api.confirm('Importer le classeur', `Les informations et le programme de la réunion ${R.annee || ''} seront remplacés par ceux du classeur. Continuer ?`, 'Importer')) return;
       if (await X.importClasseur(R)) draw(); });
     api.$('#rImpInv', el).addEventListener('click', async () => { if (await X.importInvitation(R)) draw(); });
+    api.$('#rImpLet', el).addEventListener('click', async () => { if (await X.importLettrePdf(R)) draw(); });
     api.$('#rCour', el).addEventListener('click', async () => { if (await X.importCourrier(R)) draw(); });
     api.$('#rPres', el).addEventListener('change', e => {
       R.presentation = e.target.value;
