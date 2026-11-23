@@ -47,7 +47,10 @@ App.circoArchive = (() => {
       let last = null; for (const A of ys) for (const h of ['A', 'B']) if (A.lettres?.[h]?.avec) last = A.lettres[h].avec;
       if (last) { let t = d.templates.find(x => x.role === 'itin-cour'); if (!t) { t = {id: api.uid(), role: 'itin-cour', name: 'Lettre aux anciens', category: 'Semaine spéciale'}; d.templates.push(t); } t.body = last; t.updated = new Date().toISOString(); }
     }
-    await api.flush(); await park();
+    await api.flush(); const old = await park();
+    // vos lettres de la réunion des pionniers (orateurs, invitation) servent de point de départ à la nouvelle circonscription
+    const lastR = (old.modules?.reunionpp?.reunions || []).filter(r => r.lettres && Object.keys(r.lettres).length).at(-1);
+    if (lastR) d.modules.reunionpp = {reunions: [], lettresDepart: JSON.parse(JSON.stringify(lastR.lettres))};
     d.settings.circo = {id: api.uid(), code, nom}; if (entete !== undefined) d.settings.profil.entete = entete;
     api.save(); await api.flush(); refresh();
   }

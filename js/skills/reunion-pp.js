@@ -259,14 +259,14 @@ App.reunionPP = (() => {
         need(30); y -= 6; const l = wrap(`Exposé en ${mots} parties : ${g.titre || ''}`, B, 10.5, W - 2 * M - 46); l.forEach(x => { page.drawText(x, {x: cX, y: y - 10.5, size: 10.5, font: B, color: blue}); y -= 14; }); }
       lastGroup = g || null;
       if (it.type === 'pause') { need(24); y -= 4; page.drawRectangle({x: M, y: y - 18, width: W - 2 * M, height: 18, color: band}); const t = `PAUSE (${it.duree} min.)`; page.drawText(t, {x: (W - B.widthOfTextAtSize(t, 10)) / 2, y: y - 13, size: 10, font: B, color: mute}); y -= 24; continue; }
-      const num = g ? `${g.ids.indexOf(it.id) + 1}. ` : '';
+      const num = g ? `${g.ids.indexOf(it.id) + 1}. ` : '', ind = g ? 18 : 0;   // parties d'un exposé : décalées sous leur titre
       const title = it.type === 'priere' ? 'Prière' : num + (it.titre || '');
-      const tl = wrap(title, it.type === 'priere' ? I : B, 10.5, wX), sub = [it.plan, it.participation, it.auditoire ? 'Participation auditoire' : ''].filter(Boolean).join(' · ');
-      const sl = sub ? wrap(sub, Rf, 8.5, wX) : [], hh = Math.max(tl.length * 13.5 + sl.length * 11, 26) + 6;
+      const tl = wrap(title, it.type === 'priere' ? I : B, 10.5, wX - ind), sub = [it.plan, it.participation, it.auditoire ? 'Participation auditoire' : ''].filter(Boolean).join(' · ');
+      const sl = sub ? wrap(sub, Rf, 8.5, wX - ind) : [], hh = Math.max(tl.length * 13.5 + sl.length * 11, 26) + 6;
       need(hh);
       if (h !== null) page.drawText(fmtH(h), {x: cT, y: y - 11, size: 10.5, font: B, color: ink});
-      tl.forEach((l, k) => page.drawText(l, {x: cX, y: y - 11 - k * 13.5, size: 10.5, font: it.type === 'priere' ? I : B, color: ink}));
-      sl.forEach((l, k) => page.drawText(l, {x: cX, y: y - 11 - tl.length * 13.5 - k * 11, size: 8.5, font: Rf, color: mute}));
+      tl.forEach((l, k) => page.drawText(l, {x: cX + ind, y: y - 11 - k * 13.5, size: 10.5, font: it.type === 'priere' ? I : B, color: ink}));
+      sl.forEach((l, k) => page.drawText(l, {x: cX + ind, y: y - 11 - tl.length * 13.5 - k * 11, size: 8.5, font: Rf, color: mute}));
       if (Number(it.duree)) page.drawText(`${it.duree} min.`, {x: cD, y: y - 11, size: 9.5, font: Rf, color: mute});
       if (it.nom) { page.drawText(T(nomOf(it)), {x: cS, y: y - 11, size: 10, font: B, color: ink}); if (it.asm) page.drawText(T(it.asm), {x: cS, y: y - 23, size: 8.5, font: Rf, color: mute}); }
       y -= hh; page.drawLine({start: {x: M, y: y + 2}, end: {x: W - M, y: y + 2}, thickness: .4, color: rgb(.85, .87, .9)});
@@ -325,7 +325,7 @@ App.registerSkill({
     if (R) st.id = R.id;
     const head = `<div class="page-head"><div><h1>Réunion des pionniers</h1><p>Réunion annuelle du responsable de circonscription avec les PP et PS : programme, orateurs, lettres et invitation.</p></div></div>`;
     const newR = (from) => { const r = {id: api.uid(), annee: String(new Date().getMonth() >= 8 ? new Date().getFullYear() + 1 : new Date().getFullYear()), theme: '', date: '', lieu: from?.lieu || '', adresse: from?.adresse || '', debut: from?.debut || '09:30',
-      repetDate: '', repetLieu: from?.repetLieu || 'Zoom', zoom: from?.zoom || '', code: '', president: from?.president || '', lettres: from?.lettres ? JSON.parse(JSON.stringify(from.lettres)) : {},
+      repetDate: '', repetLieu: from?.repetLieu || 'Zoom', zoom: from?.zoom || '', code: '', president: from?.president || '', lettres: from?.lettres ? JSON.parse(JSON.stringify(from.lettres)) : S.lettresDepart ? JSON.parse(JSON.stringify(S.lettresDepart)) : {},
       items: from ? from.items.map(it => ({id: api.uid(), type: it.type, titre: it.type === 'cantique' || it.type === 'pause' || it.type === 'priere' ? it.titre : '', expose: '', duree: it.duree, plan: it.plan, nom: '', prenom: '', asm: ''})) : [
         {id: api.uid(), type: 'cantique', titre: 'Cantique', duree: 5}, {id: api.uid(), type: 'priere', titre: 'Prière', duree: 0}, {id: api.uid(), type: 'discours', titre: '', duree: 15}, {id: api.uid(), type: 'pause', titre: 'Pause', duree: 20}, {id: api.uid(), type: 'cantique', titre: 'Cantique et prière', duree: 5}],
       exclus: [], ajouts: []}; S.reunions.push(r); st.id = r.id; api.save(); return r; };
@@ -342,6 +342,10 @@ App.registerSkill({
     const {rows, fin} = X.timed(R), groups = X.groupsOf(R), pio = X.pionniers(R);
     const asmCount = [...new Set(pio.map(p => p.asm))].map(a => [a, pio.filter(p => p.asm === a)]);
     const persons = api.data.persons;
+    // Les orateurs sont des anciens : seuls eux sont proposés, et un autre nom est signalé
+    const anciens = persons.filter(p => p.fonction === 'Ancien').sort((a, b) => `${a.nom} ${a.prenom}`.localeCompare(`${b.nom} ${b.prenom}`, 'fr'));
+    const ancienOf = it => anciens.find(p => api.norm(`${p.nom} ${p.prenom}`) === api.norm(`${it.nom} ${it.prenom}`));
+    const pasAncien = it => it.nom && ['priere', 'discours', 'partie'].includes(it.type) && !X.isMe(it) && anciens.length && !ancienOf(it);
     const inp = (f, v, o = '') => `<input type="text" data-f="${f}" value="${api.esc(v ?? '')}" ${o}>`;
     el.innerHTML = `${head}
       <div class="row" style="margin-bottom:12px">
@@ -385,7 +389,7 @@ App.registerSkill({
           <td><select data-c="type" style="width:auto;padding:2px 4px">${Object.entries(X.TYPES).map(([k, l]) => `<option value="${k}" ${it.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
           <td style="min-width:260px">${it.type === 'partie' ? `<input type="text" data-c="expose" value="${api.esc(it.expose || '')}" placeholder="Titre de l’exposé" style="font-size:12px;margin-bottom:3px">` : ''}<input type="text" data-c="titre" value="${api.esc(it.titre || '')}" placeholder="${it.type === 'partie' ? 'Partie' : 'Titre'}">${g ? `<div class="small muted">Partie ${g.ids.indexOf(it.id) + 1} / ${g.ids.length}</div>` : ''}</td>
           <td><input type="number" min="0" data-c="duree" value="${api.esc(it.duree ?? '')}" style="width:56px;padding:4px"></td>
-          <td>${it.type === 'pause' ? '' : `<input type="text" data-c="orateur" list="rPers" value="${api.esc([(it.nom || '').toUpperCase(), it.prenom].filter(Boolean).join(' '))}" placeholder="NOM Prénom" style="min-width:150px">`}</td>
+          <td>${it.type === 'pause' ? '' : `<input type="text" data-c="orateur" list="rPers" value="${api.esc([(it.nom || '').toUpperCase(), it.prenom].filter(Boolean).join(' '))}" placeholder="Ancien : NOM Prénom" style="min-width:150px${pasAncien(it) ? ';border-color:var(--warn);background:#fff8e6' : ''}">${pasAncien(it) ? '<div class="small" style="color:var(--warn)">⚠ pas ancien dans l’annuaire</div>' : ''}`}</td>
           <td>${it.type === 'pause' ? '' : `<input type="text" data-c="asm" value="${api.esc(it.asm || '')}" style="min-width:110px">`}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="text" data-c="participation" list="rPart" value="${api.esc(it.participation || '')}" style="min-width:150px">` : ''}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="checkbox" data-c="auditoire" ${it.auditoire ? 'checked' : ''}>` : ''}</td>
@@ -393,10 +397,10 @@ App.registerSkill({
           <td>${it.nom && it.type !== 'pause' ? `<input type="checkbox" data-c="retour" ${it.retour ? 'checked' : ''}>` : ''}</td>
           <td style="white-space:nowrap"><button class="btn" data-up title="Monter">↑</button><button class="btn" data-down title="Descendre">↓</button>${['priere', 'discours', 'partie'].includes(it.type) && it.nom && !X.isMe(it) ? `<button class="btn" data-pdf title="Lettre de ${api.esc(X.nomOf(it))} (PDF)">📄</button>` : ''}<button class="btn" data-del title="Supprimer">✕</button></td></tr>`; }).join('')}
         </table></div>
-        <datalist id="rPers">${persons.filter(p => p.civilite !== 'Sœur').slice(0, 3000).map(p => `<option value="${api.esc((p.nom || '').toUpperCase() + ' ' + (p.prenom || ''))}">${api.esc(p.assemblee || '')}</option>`).join('')}</datalist>
+        <datalist id="rPers">${anciens.map(p => `<option value="${api.esc((p.nom || '').toUpperCase() + ' ' + (p.prenom || ''))}">${api.esc(p.assemblee || '')}</option>`).join('')}</datalist>
         <datalist id="rPart">${['Interview (2 min)', 'Interview (3 min)', 'Interview (4 min)', 'Deux interviews', 'Démonstration (2 min)', 'Deux démonstrations (2 min)', 'Expérience'].map(x => `<option value="${x}">`).join('')}</datalist>
         <div class="row">${Object.entries(X.TYPES).map(([k, l]) => `<button class="btn" data-addt="${k}">+ ${l}</button>`).join('')}</div>
-        <p class="small muted" style="margin:0">Les horaires se calculent à partir de l’heure de début et des durées. Les parties consécutives d’un même exposé sont numérotées et regroupées dans le programme. Vos propres participations n’ont pas de lettre.</p></div>`;
+        <p class="small muted" style="margin:0">Orateurs : seuls les anciens de l’annuaire sont proposés (${anciens.length}). Les horaires se calculent à partir de l’heure de début et des durées. Les parties consécutives d’un même exposé sont numérotées et regroupées dans le programme. Vos propres participations n’ont pas de lettre.</p></div>`;
 
     const save = () => api.save();
     api.$('#rSel', el).addEventListener('change', e => { st.id = e.target.value; draw(); });
@@ -415,7 +419,8 @@ App.registerSkill({
       const tr = e.target.closest('tr[data-i]'); if (!tr) return; const it = R.items[+tr.dataset.i], c = e.target.dataset.c; if (!c) return;
       if (c === 'orateur') { const v = e.target.value.trim(), m = /^([A-ZÀ-Ý'’\- ]{2,}?)\s+([A-ZÀ-Ý][^A-Z].*)$/.exec(v);
         if (m) { it.nom = m[1].trim(); it.prenom = m[2].trim(); } else { const [a, ...b] = v.split(' '); it.nom = (a || '').toUpperCase(); it.prenom = b.join(' '); }
-        const p = persons.find(p => api.norm(`${p.nom} ${p.prenom}`) === api.norm(`${it.nom} ${it.prenom}`)); if (p && !it.asm) it.asm = p.assemblee || ''; }
+        const p = ancienOf(it); if (p) it.asm = p.assemblee || it.asm;
+        else if (it.nom && !X.isMe(it) && anciens.length) api.toast(`${X.nomOf(it)} n’est pas ancien dans l’annuaire : les orateurs de la réunion des pionniers sont des anciens.`, 'error'); }
       else if (e.target.type === 'checkbox') it[c] = e.target.checked;
       else if (c === 'duree') it.duree = Math.max(0, Number(e.target.value) || 0);
       else it[c] = e.target.value.trim();
@@ -433,6 +438,7 @@ App.registerSkill({
     api.$('#rProg', el).addEventListener('click', async () => { try { api.download(App.pdf.fileName(`Programme réunion des pionniers ${R.annee || ''}`) + '.pdf', new Blob([await X.programmePdf(R)], {type: 'application/pdf'})); } catch (err) { console.error(err); api.toast('Erreur PDF : ' + err.message, 'error'); } });
     api.$('#rLet', el).addEventListener('click', async () => {
       const L = X.avecLettre(R); if (!L.length) return api.toast('Aucun orateur à qui écrire : renseignez les orateurs du programme.', 'error');
+      const nA = L.filter(pasAncien).length; if (nA && !await api.confirm('Orateurs à vérifier', `${nA} orateur(s) ne sont pas anciens dans l’annuaire (signalés ⚠ dans le programme). Produire quand même les lettres ?`, 'Produire')) return;
       try { const entries = []; for (const it of L) entries.push({name: X.lettreNom(R, it), bytes: new Uint8Array(await X.lettreBytes(R, it))});
         api.download(App.pdf.fileName(`Lettres orateurs réunion PP ${R.annee || ''}`) + '.zip', App.files.zip(entries)); api.toast(`${entries.length} lettre(s) dans le ZIP`); }
       catch (err) { console.error(err); api.toast('Erreur PDF : ' + err.message, 'error'); } });
