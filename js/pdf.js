@@ -101,7 +101,9 @@ App.pdf = (() => {
       if (cell) runs.push({cellEnd: toPt(st.width)});
     }
     function blockStyle(el) { const st = el.style || {};
-      return {bg: colorOf(st.backgroundColor), rule: /solid|double/.test(st.borderBottom || st.borderBottomStyle || ''), before: toPt(st.marginTop), ind: toPt(st.marginLeft) + toPt(st.paddingLeft), size: st.fontSize ? toPt(st.fontSize) : 0}; }
+      // cadre complet (border: 1px solid …) : paragraphe encadré
+      const box = /solid|double/.test(st.borderTopStyle || '') && /solid|double/.test(st.borderLeftStyle || '') ? (colorOf(st.borderTopColor) || [0, 0, 0]) : null;
+      return {box, bg: colorOf(st.backgroundColor), rule: !box && /solid|double/.test(st.borderBottom || st.borderBottomStyle || ''), before: toPt(st.marginTop), ind: toPt(st.marginLeft) + toPt(st.paddingLeft), size: st.fontSize ? toPt(st.fontSize) : 0}; }
     function walk(node, ind, dsz = 11) {
       for (const ch of [...node.childNodes]) {
         if (ch.nodeType === 1 && (ch.tagName === 'UL' || ch.tagName === 'OL')) {
@@ -120,7 +122,7 @@ App.pdf = (() => {
           if (hasBlockChild) { const start = blocks.length; walk(ch, ind + bs.ind, bs.size || dsz); if (bs.bg) for (const b of blocks.slice(start)) b.bg ??= bs.bg; continue; }
           const runs = []; collect(ch, ch.tagName.startsWith('H') ? {bold: true} : {}, runs);
           const size = bs.size || (ch.tagName === 'H1' ? 18 : ch.tagName === 'H2' ? 15 : ch.tagName === 'H3' ? 12.5 : dsz);
-          blocks.push({align: alignOf(ch), size, runs, indent: ind + bs.ind, bg: bs.bg, rule: bs.rule, before: bs.before});
+          blocks.push({align: alignOf(ch), size, runs, indent: ind + bs.ind, bg: bs.bg, box: bs.box, rule: bs.rule, before: bs.before});
         } else {
           const runs = []; collect(ch, {}, runs);
           if (runs.some(r => r.br || r.img || (r.text && r.text.trim()))) blocks.push({align: 'left', size: dsz, runs, indent: ind});
@@ -175,8 +177,8 @@ App.pdf = (() => {
       const lhOf = l => Math.max(size, ...l.map(p => p.sz || size)) * 1.3;
       const blockH = lines.reduce((a, l) => a + lhOf(l), 0);
       y -= blk.before || 0;
-      if (blk.bg && y - blockH < M && blockH < H - 2 * M) newPage();
-      if (blk.bg) page.drawRectangle({x: M + indent - 3, y: y - blockH - 2, width: width + 6, height: blockH + 3, color: col(blk.bg)});
+      if ((blk.bg || blk.box) && y - blockH < M && blockH < H - 2 * M) newPage();
+      if (blk.bg || blk.box) page.drawRectangle({x: M + indent - 3, y: y - blockH - 2, width: width + 6, height: blockH + 3, ...(blk.bg ? {color: col(blk.bg)} : {}), ...(blk.box ? {borderColor: col(blk.box), borderWidth: .8} : {})});
       for (let li = 0; li < lines.length; li++) {
         const line = lines[li], lh = lhOf(line), base = Math.max(size, ...line.map(p => p.sz || size));
         if (y - lh < M) newPage();

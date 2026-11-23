@@ -84,6 +84,49 @@ App.reunionPP = (() => {
       .replace(/(commencera à\s*(?:<[^>]+>)*)\d{1,2}\s*h\s*\d{2}/i, '$1{{rp_debut}}').replace(/(terminera à\s*(?:<[^>]+>)*)\d{1,2}\s*h\s*\d{2}/i, '$1{{rp_fin}}').replace(/(pause de\s*(?:<[^>]+>)*)\d+\s*min\.?/i, '$1{{rp_pause}}')
       .replace(/(répétition est prévue[^<]*?\{\{rp_repet_date\}\})/i, '$1 {{rp_repet_heure}}');
   }
+  /* Présentation des lettres aux orateurs (modèle de l'utilisateur) : en-tête souligné d'un filet, objet en rouge,
+     destinataire et date en gras, thème centré, partie en rouge, « Préparation personnelle » et « Une répétition » en gras,
+     puces décalées, phrase de confirmation encadrée sur fond bleu, signature après « Ton frère dans la foi ». */
+  function signature() {
+    const p = api.data.settings.profil || {}; if (p.signature) return p.signature;
+    const all = [...api.data.templates.map(t => t.body || ''), ...(api.data.modules.itineraire?.annees || []).flatMap(A => Object.values(A.lettres || {}).flatMap(L => [L?.avec || '', L?.sans || '']))].join(' ');
+    const imgs = [...all.matchAll(/src="(data:image\/(?:png|jpe?g);base64,[^"]+)"/g)].map(m => m[1]);
+    return imgs.sort((a, b) => b.length - a.length)[0] || '';   // la plus grande image : la signature
+  }
+  function styleLetter(html) {
+    const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html'), out = [];
+    const paras = [];
+    for (const el of doc.body.firstChild.children) {
+      if (el.tagName === 'UL') { for (const li of el.children) paras.push('• ' + li.innerHTML.trim()); continue; }
+      for (const part of el.innerHTML.replace(/\n{2,}/g, '\n\n').split('\n')) paras.push(part.trim() === '<br>' ? '' : part.trim());   // ligne vide gardée entre deux paragraphes
+    }
+    const txt = h => h.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim(), sig = signature();
+    let bullets = [], skipName = false;
+    const flush = () => { if (bullets.length) { out.push(`<ul style="margin-left:60pt">${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`); bullets = []; } };
+    paras.forEach((h, i) => {
+      const t = txt(h);
+      if (/^•/.test(t)) { bullets.push(h.replace(/^•\s*/, '')); return; }
+      flush();
+      if (!t) { out.push('<p><br></p>'); return; }
+      if (skipName && /\{\{exp_prenom\}\}/.test(t)) return;
+      if (i === 0) return out.push(`<p style="text-align:right;font-weight:bold;font-size:10pt;border-bottom:1px solid #000">${t}</p>`);
+      if (i < 3 && /@/.test(t)) return out.push(`<p style="font-size:7pt">${t}</p>`);
+      if (/^Le\s+\{\{date_jour/.test(t)) return out.push('<p style="text-align:right;margin-right:40pt">Le {{date_jour_complet}}</p>');
+      if (/^Objet\s*:/i.test(t)) return out.push(`<p style="color:#c00000;font-weight:bold;font-size:13pt">${t}</p>`);
+      if (/^(À\s*:\s*)?(F\.|Frère)\s*\{\{prenom\}\}/.test(t)) return out.push('<p><b>Frère {{prenom}} {{nom}}</b></p>');
+      if (t === '{{rp_date}}') return out.push('<p><b>{{rp_date}}</b></p>');
+      if (t === '{{rp_theme}}') return out.push('<p style="text-align:center"><b>{{rp_theme}}</b></p>');
+      if (t === '{{rp_discours}}') return out.push('<p><b>{{rp_discours}}</b></p>');
+      if (t === '{{rp_partie}}') return out.push('<p style="color:#c00000"><b>{{rp_partie}}</b></p>');
+      if (/^Préparation personnelle\s*:/i.test(t)) return out.push(`<p><b>Préparation personnelle :</b>${h.replace(/^(<[^>]+>)*Préparation personnelle\s*:(<\/[^>]+>)*/i, '')}</p>`);
+      if (/^Une répétition est prévue/i.test(t)) return out.push(`<p><b>Une répétition</b> est prévue : <b>${t.replace(/^Une répétition est prévue\s*:?\s*/i, '')}</b></p>`);
+      if (/^Je te remercie de me confirmer/i.test(t)) return out.push(`<p style="text-align:center;font-weight:bold;background-color:#dbe5f1;border:1px solid #000">${t}</p>`);
+      if (/^(Ton frère|Ta sœur) dans la foi/i.test(t)) { skipName = !!sig; return out.push(`<p style="margin-left:110pt">${t}${sig ? ` <img src="${sig}" style="width:170pt">` : ''}</p>`); }
+      out.push(`<p${/text-align:center/.test(paras[i] || '') ? ' style="text-align:center"' : ''}>${h}</p>`);
+    });
+    flush();
+    return tidy(out.join('\n')) + '<!--mf1-->';
+  }
   // Onglet de lettre du classeur (Prière, Discours, Discours en plusieurs parties) → HTML avec champs
   function sheetToHtml(rows, R) {
     const out = [];
@@ -101,7 +144,7 @@ App.reunionPP = (() => {
       out.push(`<p${right ? ' style="text-align:right"' : center ? ' style="text-align:center"' : ''}>${esc}</p>`);
       if (/^Ton frère|^Ta sœur/i.test(t)) out.push('<p style="text-align:right">{{exp_prenom}} {{exp_nom}}</p>');
     });
-    return tidy(fieldify(out.join('\n'), R));
+    return styleLetter(tidy(fieldify(out.join('\n'), R)));
   }
 
   /* ---------- Import du classeur « Publipostage Réunion PP » ---------- */
@@ -363,7 +406,7 @@ App.reunionPP = (() => {
     for (const it of R.items) if (['discours', 'partie'].includes(it.type) && !L.includes(it)) it.repet = '';
     return L.length;
   }
-  return {aRepeter, planRepet, PTYPES, partsOf, partLabel, partText, statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
+  return {styleLetter, signature, aRepeter, planRepet, PTYPES, partsOf, partLabel, partText, statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
 })();
 
 App.registerSkill({
@@ -391,6 +434,8 @@ App.registerSkill({
       return;
     }
     R.items ??= []; R.lettres ??= {}; R.exclus ??= []; R.ajouts ??= [];
+    // lettres importées avant la mise en forme : présentation appliquée une fois
+    for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k] && !R.lettres[k].includes('<!--mf1-->')) { R.lettres[k] = X.styleLetter(R.lettres[k]); api.save(); }
     const {rows, fin} = X.timed(R), groups = X.groupsOf(R), pio = X.pionniers(R);
     const asmCount = [...new Set(pio.map(p => p.asm))].map(a => [a, pio.filter(p => p.asm === a)]);
     const persons = api.data.persons;
@@ -436,6 +481,7 @@ App.registerSkill({
         <div class="card stack"><strong>Lettres</strong>
           ${Object.entries(X.LETTRES).map(([k, l]) => `<div class="row small"><span style="flex:1">${l} ${R.lettres[k] ? '<span class="pill ok">votre modèle</span>' : '<span class="pill">modèle neutre</span>'}</span><button class="btn" data-edit="${k}">Modifier</button></div>`).join('')}
           <div class="row"><button class="btn" id="rImpInv">Importer la lettre d’invitation (Word)…</button></div>
+          <div class="row small"><span style="flex:1">Signature : ${X.signature() ? `<img src="${X.signature()}" style="height:32px;vertical-align:middle;background:#fff;border:1px solid var(--line);border-radius:4px">` : '<span class="muted">aucune</span>'}</span><button class="btn" id="rSig">${api.data.settings.profil?.signature ? 'Changer' : 'Importer une image'}…</button></div>
           <p class="small muted" style="margin:0">Les lettres sont produites en PDF. Les orateurs reçoivent la lettre de leur participation ; l’invitation est la même pour tous les pionniers (vous la transmettez aux CCA).</p></div>
         <div class="card stack"><strong>Pionniers invités : ${pio.length}</strong>
           <div class="small" style="max-height:220px;overflow:auto">${asmCount.map(([a, l]) => `<div><strong>${api.esc(a || 'Sans assemblée')}</strong> (${l.length}) : ${l.map(p => `${api.esc(p.nom)} ${api.esc(p.prenom)}${p.statut === 'PS' ? ' <span class="pill">PS</span>' : ''} <a href="#" data-excl="${p.id || ''}" data-aj="${p.ajout ? api.esc(p.nom + '|' + p.prenom) : ''}" title="Retirer" style="color:var(--danger);text-decoration:none">✕</a>`).join(', ')}</div>`).join('') || '<span class="muted">Aucun PP ni PS trouvé : renseignez les statuts dans Circonscription › Proclamateurs (ou avec les fiches S-21).</span>'}</div>
@@ -474,6 +520,12 @@ App.registerSkill({
       if (await X.importClasseur(R)) draw(); });
     api.$('#rImpInv', el).addEventListener('click', async () => { if (await X.importInvitation(R)) draw(); });
     api.$('#rCour', el).addEventListener('click', async () => { if (await X.importCourrier(R)) draw(); });
+    api.$('#rSig', el).addEventListener('click', async () => {
+      const f = await api.pickFile('image/png,image/jpeg'); if (!f) return;
+      const url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+      if (!/^data:image\/(png|jpe?g)/.test(url)) return api.toast('Image PNG ou JPG attendue.', 'error');
+      api.data.settings.profil.signature = url; for (const k of ['priere', 'discours', 'partie']) if (R.lettres[k]) R.lettres[k] = X.styleLetter(R.lettres[k].replace(/<!--mf1-->/, '').replace(/ ?<img src="data:image[^>]+>/, ''));
+      api.save(); api.toast('Signature enregistrée'); draw(); });
     el.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => X.editLettre(R, b.dataset.edit, draw)));
     api.$('#rInfo', el).addEventListener('change', e => { const f = e.target.dataset.f; if (!f) return; R[f] = e.target.value.trim(); if (f === 'date') delete R.dateTexte; if (f === 'repetDate') delete R.repetTexte;
       if ((f === 'repetDebut' || f === 'repetPas') && R.repetDebut) { const n = X.planRepet(R); if (n) api.toast(`Horaires de répétition proposés pour ${n} orateur(s) : ${Number(R.repetPas) || 10} min pour une interview ou démonstration, ${2 * (Number(R.repetPas) || 10)} min s’il y en a plusieurs`); save(); draw(); return; }
