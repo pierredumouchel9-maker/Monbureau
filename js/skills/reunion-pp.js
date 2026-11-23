@@ -332,7 +332,7 @@ App.reunionPP = (() => {
   // à partir de l'heure de la première répétition (ou d'un sujet donné, dont l'heure vient d'être changée)
   // nombre de participations d'un sujet (« Deux démonstrations… » importé du classeur compte pour deux)
   const nbParts = it => partsOf(it).reduce((n, x) => n + (x.libre ? (/\b(deux|trois|quatre)\b|\+|&/i.test(x.libre) ? 2 : 1) : 1), 0);
-  const aRepeter = R => R.items.filter(it => ['discours', 'partie'].includes(it.type) && it.nom && partsOf(it).length);
+  const aRepeter = R => R.items.filter(it => ['discours', 'partie'].includes(it.type) && partsOf(it).length);
   function planRepet(R, from) {
     const L = aRepeter(R), pas = Number(R.repetPas) || 10; let k0 = 0, t0 = toMin(R.repetDebut);
     if (from) { const k = L.indexOf(from), t = toMin(from.repet); if (k >= 0 && t !== null) { k0 = k; t0 = t; if (k === 0) R.repetDebut = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; } }
@@ -406,6 +406,8 @@ App.registerSkill({
             <label class="field"><span>Date</span><input type="date" data-f="repetDate" value="${api.esc(R.repetDate || '')}"></label>
             <label class="field"><span>Première répétition</span><input type="time" data-f="repetDebut" value="${api.esc(R.repetDebut || '')}"></label>
             <label class="field"><span>Créneau pour 1 interview ou démo (min)</span><input type="number" min="5" max="60" data-f="repetPas" value="${api.esc(R.repetPas || 10)}" title="Le double quand il y en a plusieurs"></label>
+            <div class="field wide"><button class="btn primary" type="button" id="rRepCalc">↻ Calculer les horaires de répétition</button>
+              <span class="small muted">${X.aRepeter(R).length} sujet(s) avec interview ou démonstration</span></div>
             <label class="field"><span>Lieu</span>${inp('repetLieu', R.repetLieu)}</label>
             <label class="field"><span>N° Zoom</span>${inp('zoom', R.zoom)}</label>
             <label class="field"><span>Code secret</span>${inp('code', R.code)}</label>
@@ -453,8 +455,13 @@ App.registerSkill({
     api.$('#rCour', el).addEventListener('click', async () => { if (await X.importCourrier(R)) draw(); });
     el.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => X.editLettre(R, b.dataset.edit, draw)));
     api.$('#rInfo', el).addEventListener('change', e => { const f = e.target.dataset.f; if (!f) return; R[f] = e.target.value.trim(); if (f === 'date') delete R.dateTexte; if (f === 'repetDate') delete R.repetTexte;
-      if (f === 'repetDebut' || f === 'repetPas') { const n = X.planRepet(R); if (n) api.toast(`Horaires de répétition proposés pour ${n} orateur(s) : ${Number(R.repetPas) || 10} min pour une interview ou démonstration, ${2 * (Number(R.repetPas) || 10)} min s’il y en a plusieurs`); save(); draw(); return; }
+      if ((f === 'repetDebut' || f === 'repetPas') && R.repetDebut) { const n = X.planRepet(R); if (n) api.toast(`Horaires de répétition proposés pour ${n} orateur(s) : ${Number(R.repetPas) || 10} min pour une interview ou démonstration, ${2 * (Number(R.repetPas) || 10)} min s’il y en a plusieurs`); save(); draw(); return; }
       save(); if (['debut', 'date', 'annee'].includes(f)) draw(); });
+    api.$('#rRepCalc', el).addEventListener('click', () => {
+      const v = api.$('[data-f=repetDebut]', el).value; if (v) R.repetDebut = v;
+      if (!R.repetDebut) return api.toast('Indiquez d’abord l’heure de la première répétition.', 'error');
+      const n = X.planRepet(R); save(); draw();
+      api.toast(n ? `Horaires de répétition calculés pour ${n} sujet(s)` : 'Aucun sujet avec interview ou démonstration : ajoutez-les dans la colonne « Interviews / démonstrations ».', n ? '' : 'error'); });
     const tab = api.$('#rTab', el);
     tab.addEventListener('change', e => {
       const tr = e.target.closest('tr[data-i]'); if (!tr) return; const it = R.items[+tr.dataset.i], c = e.target.dataset.c; if (!c) return;
