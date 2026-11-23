@@ -7,7 +7,7 @@ App.circo = (() => {
   /* ---------- Indicateurs (libellés repris du classeur d'analyse) ---------- */
   const IND = [
     {k: 'a', l: 'A', g: 'Effectifs', t: 'Anciens'}, {k: 'ass', l: 'Ass.', g: 'Effectifs', t: 'Assistants'},
-    {k: 'procl', l: 'Procl+PP', g: 'Effectifs', t: 'Proclamateurs (pionniers compris)'}, {k: 'ir', l: 'IR', g: 'Effectifs'},
+    {k: 'procl', l: 'Procl.', g: 'Effectifs', t: 'Total des proclamateurs (PP, PS, PAP et PNB compris)'}, {k: 'ir', l: 'IR', g: 'Effectifs'},
     {k: 'in', l: 'IN', g: 'Effectifs'}, {k: 'totalin', l: 'Total IN', g: 'Effectifs'}, {k: 'nvpro', l: 'Nv.pro', g: 'Effectifs'}, {k: 'redact', l: 'red.act.', g: 'Effectifs'},
     {k: 'eb', l: 'E.B.', g: 'Activité'}, {k: 'pp', l: 'PP', g: 'Activité'}, {k: 'ebpp', l: 'EB PP', g: 'Activité'},
     {k: 'ps', l: 'PS', g: 'Activité'}, {k: 'ebps', l: 'EB PS', g: 'Activité'}, {k: 'pa', l: 'PA', g: 'Activité'},
@@ -1493,14 +1493,19 @@ App.circo = (() => {
       catch (err) { console.error(err); api.toast('Erreur lors de la création du PDF : ' + err.message); }
     });
     api.$('#pRep', el).addEventListener('click', async () => {
-      const act = live.filter(r => ACTIF(r.e.statut));
+      // Mêmes calculs que les cases du bilan : départs (déménagement, décès) exclus, fonction du cycle
+      const fNow = r => fonctionAt(c, r.p) ?? r.p.fonction ?? '';
+      // Total des proclamateurs = fiches S-21 pointées (proclamateurs, PP, PS, PAP et PNB) ; tant qu'aucune n'est pointée, le total de la liste
+      const tot = live.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB').length;
+      const s21 = live.filter(r => r.e.s21 && (ACTIF(r.e.statut) || r.e.statut === 'PNB')).length, totP = s21 || tot;
       const vals = [
-        ['a', 'Anciens (A)', rows.filter(r => r.p.fonction === 'Ancien').length], ['ass', 'Assistants (Ass.)', rows.filter(r => r.p.fonction === 'Assistant').length],
-        ['procl', 'Proclamateurs baptisés actifs, PP compris (Procl+PP)', act.length], ['totalin', 'Inactifs (Total IN)', cnt('IN')], ['pp', 'Pionniers permanents (PP)', cnt('PP')],
+        ['a', 'Anciens (A)', live.filter(r => fNow(r) === 'Ancien').length], ['ass', 'Assistants (Ass.)', live.filter(r => fNow(r) === 'Assistant').length],
+        ['procl', s21 ? 'Total des proclamateurs = S-21 pointées (PP et PNB compris)' : 'Total des proclamateurs (aucune S-21 pointée : total de la liste)', totP], ['totalin', 'Inactifs (Total IN)', cnt('IN')], ['pp', 'Pionniers permanents (PP)', cnt('PP')],
         ['eb', 'Études bibliques (E.B.)', sum('eb')], ['ebpp', 'Études bibliques des PP (EB PP)', rows.filter(r => r.e.statut === 'PP').reduce((s, r) => s + (Number(r.e.eb) || 0), 0)],
         ['ir', 'Proclamateurs irréguliers (IR)', live.filter(r => r.e.ir > 0).length], ['pa', 'Pionniers auxiliaires (PA, PAP compris)', live.filter(r => r.e.pa > 0 && !['PP', 'PAP', 'PS'].includes(r.e.statut)).length + cnt('PAP')],
         ['nvpro', 'Nouveaux proclamateurs : baptisés + emménagements (Nv.pro)', evtCount('Baptisé') + evtCount('Emménagement')], ['redact', 'De nouveau actifs (red.act.)', evtCount('De nouveau actif')]];
-      const sel = await api.modal({title: `Reporter ${asm} dans le cycle ${c.code}`, body: `<div class="stack"><p class="small muted" style="margin:0">Cochez les valeurs à écrire dans le tableau de bord (les autres ne changent pas).</p>
+      const sel = await api.modal({title: `Reporter ${asm} dans le cycle ${c.code}`, body: `<div class="stack"><p class="small muted" style="margin:0">Cochez les valeurs à écrire dans le tableau de bord (les autres ne changent pas). Les chiffres sont ceux du bilan : déménagements et décès ne sont pas comptés.</p>
+        ${s21 && s21 !== tot ? `<div class="notice small">Total reporté : les <strong>${s21}</strong> fiches S-21 pointées, comme sur le bilan. ${tot - s21} personne(s) de la liste n’ont pas de S-21 pointée et ne sont pas comptées.</div>` : ''}
         <table class="list"><tr><th></th><th>Indicateur</th><th style="text-align:right">Actuel</th><th style="text-align:right">D’après la liste</th></tr>
         ${vals.map(([k, l, v]) => { const cur = n(c.valeurs[asm]?.[k]); return `<tr><td><input type="checkbox" data-k="${k}" ${(cur === null && !['nvpro', 'redact'].includes(k)) || (cur !== null && cur !== v && !['nvpro', 'redact'].includes(k)) ? 'checked' : ''}></td><td>${l}</td><td style="text-align:right">${fmt(cur)}</td><td style="text-align:right"><strong>${v}</strong></td></tr>`; }).join('')}</table></div>`,
         actions: [{label: 'Annuler', value: null}, {label: 'Reporter', kind: 'primary', onClick: b => api.$$('input[data-k]:checked', b).map(i => i.dataset.k)}]});
