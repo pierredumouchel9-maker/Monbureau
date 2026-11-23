@@ -204,13 +204,16 @@ App.reunionPP = (() => {
   }
 
   /* ---------- Pionniers invités : PP et PS de toutes les assemblées, d'après le dernier cycle (ou la fiche S-21) ---------- */
-  function pionniers(R) {
+  // Statut d'une personne : celui du dernier cycle où elle figure (Circonscription), sinon celui de sa fiche (S-21)
+  function statutOf(p) {
     const S = api.data.modules.circonscription || {}, cycles = (S.cycles || []).slice().sort((a, b) => String(b.code).localeCompare(String(a.code)));
-    const DEP = ['Déménagement', 'Décédé(e)'], out = [];
+    for (const c of cycles) { const e = S.suivi?.[c.id]?.[p.id]; if (e && (e.statut !== undefined || e.evt)) return {st: e.statut || '', gone: ['Déménagement', 'Décédé(e)'].includes(e.evt)}; }
+    return {st: ['PNB', 'PP', 'PS'].includes(p.statut) ? p.statut : '', gone: false};
+  }
+  function pionniers(R) {
+    const out = [];
     for (const p of api.data.persons) {
-      let st, gone = false;
-      for (const c of cycles) { const e = S.suivi?.[c.id]?.[p.id]; if (e && (e.statut !== undefined || e.evt)) { st = e.statut || ''; gone = DEP.includes(e.evt); break; } }
-      if (st === undefined) st = ['PP', 'PS'].includes(p.statut) ? p.statut : '';
+      const {st, gone} = statutOf(p);
       if (gone || !['PP', 'PS'].includes(st) || (R.exclus || []).includes(p.id)) continue;
       out.push({id: p.id, nom: (p.nom || '').toUpperCase(), prenom: p.prenom || '', asm: p.assemblee || '', statut: st});
     }
@@ -311,7 +314,7 @@ App.reunionPP = (() => {
     R.lettres ??= {}; if (r === 'reset') delete R.lettres[k]; else R.lettres[k] = r;
     api.save(); redraw();
   }
-  return {store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
+  return {statutOf, store, modele, onePage, parseProgramme, importCourrier, values, timed, groupsOf, fieldify, sheetToHtml, importClasseur, importInvitation, pionniers, lettreBytes, lettreNom, avecLettre, programmePdf, pionniersPdf, editLettre, longDate, fmtH, toMin, nomOf, isMe, TYPES, LETTRES};
 })();
 
 App.registerSkill({
@@ -343,8 +346,14 @@ App.registerSkill({
     const asmCount = [...new Set(pio.map(p => p.asm))].map(a => [a, pio.filter(p => p.asm === a)]);
     const persons = api.data.persons;
     // Les orateurs sont des anciens : seuls eux sont proposés, et un autre nom est signalé
-    const anciens = persons.filter(p => p.fonction === 'Ancien').sort((a, b) => `${a.nom} ${a.prenom}`.localeCompare(`${b.nom} ${b.prenom}`, 'fr'));
+    // de préférence des anciens pionniers (PP, PS) : proposés en premier
+    const pioSt = p => ['PP', 'PS'].includes(X.statutOf(p).st) ? X.statutOf(p).st : '';
+    const anciens = persons.filter(p => p.fonction === 'Ancien' && !X.statutOf(p).gone).sort((a, b) => (pioSt(a) ? 0 : 1) - (pioSt(b) ? 0 : 1) || `${a.nom} ${a.prenom}`.localeCompare(`${b.nom} ${b.prenom}`, 'fr'));
+    const nPio = anciens.filter(pioSt).length;
     const ancienOf = it => anciens.find(p => api.norm(`${p.nom} ${p.prenom}`) === api.norm(`${it.nom} ${it.prenom}`));
+    // Le responsable de circonscription (vous, d'après le profil) présente aussi des sujets : proposé en tête de liste
+    const prof = api.data.settings.profil || {}, code = api.data.settings.circo?.code || '';
+    const moi = prof.nom ? {nom: prof.nom.toUpperCase(), prenom: prof.prenom || '', asm: code ? `RC ${code}` : 'Responsable de circonscription'} : null;
     const pasAncien = it => it.nom && ['priere', 'discours', 'partie'].includes(it.type) && !X.isMe(it) && anciens.length && !ancienOf(it);
     const inp = (f, v, o = '') => `<input type="text" data-f="${f}" value="${api.esc(v ?? '')}" ${o}>`;
     el.innerHTML = `${head}
@@ -389,7 +398,7 @@ App.registerSkill({
           <td><select data-c="type" style="width:auto;padding:2px 4px">${Object.entries(X.TYPES).map(([k, l]) => `<option value="${k}" ${it.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
           <td style="min-width:260px">${it.type === 'partie' ? `<input type="text" data-c="expose" value="${api.esc(it.expose || '')}" placeholder="Titre de l’exposé" style="font-size:12px;margin-bottom:3px">` : ''}<input type="text" data-c="titre" value="${api.esc(it.titre || '')}" placeholder="${it.type === 'partie' ? 'Partie' : 'Titre'}">${g ? `<div class="small muted">Partie ${g.ids.indexOf(it.id) + 1} / ${g.ids.length}</div>` : ''}</td>
           <td><input type="number" min="0" data-c="duree" value="${api.esc(it.duree ?? '')}" style="width:56px;padding:4px"></td>
-          <td>${it.type === 'pause' ? '' : `<input type="text" data-c="orateur" list="rPers" value="${api.esc([(it.nom || '').toUpperCase(), it.prenom].filter(Boolean).join(' '))}" placeholder="Ancien : NOM Prénom" style="min-width:150px${pasAncien(it) ? ';border-color:var(--warn);background:#fff8e6' : ''}">${pasAncien(it) ? '<div class="small" style="color:var(--warn)">⚠ pas ancien dans l’annuaire</div>' : ''}`}</td>
+          <td>${it.type === 'pause' ? '' : `<input type="text" data-c="orateur" list="rPers" value="${api.esc([(it.nom || '').toUpperCase(), it.prenom].filter(Boolean).join(' '))}" placeholder="Ancien : NOM Prénom" style="min-width:150px${pasAncien(it) ? ';border-color:var(--warn);background:#fff8e6' : ''}">${pasAncien(it) ? '<div class="small" style="color:var(--warn)">⚠ pas ancien dans l’annuaire</div>' : ancienOf(it) && !X.isMe(it) && !pioSt(ancienOf(it)) ? '<div class="small muted">ni PP ni PS</div>' : ancienOf(it) && pioSt(ancienOf(it)) ? `<div class="small" style="color:var(--ok,#2e7d32)">${pioSt(ancienOf(it))}</div>` : ''}`}</td>
           <td>${it.type === 'pause' ? '' : `<input type="text" data-c="asm" value="${api.esc(it.asm || '')}" style="min-width:110px">`}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="text" data-c="participation" list="rPart" value="${api.esc(it.participation || '')}" style="min-width:150px">` : ''}</td>
           <td>${['discours', 'partie'].includes(it.type) ? `<input type="checkbox" data-c="auditoire" ${it.auditoire ? 'checked' : ''}>` : ''}</td>
@@ -397,10 +406,10 @@ App.registerSkill({
           <td>${it.nom && it.type !== 'pause' ? `<input type="checkbox" data-c="retour" ${it.retour ? 'checked' : ''}>` : ''}</td>
           <td style="white-space:nowrap"><button class="btn" data-up title="Monter">↑</button><button class="btn" data-down title="Descendre">↓</button>${['priere', 'discours', 'partie'].includes(it.type) && it.nom && !X.isMe(it) ? `<button class="btn" data-pdf title="Lettre de ${api.esc(X.nomOf(it))} (PDF)">📄</button>` : ''}<button class="btn" data-del title="Supprimer">✕</button></td></tr>`; }).join('')}
         </table></div>
-        <datalist id="rPers">${anciens.map(p => `<option value="${api.esc((p.nom || '').toUpperCase() + ' ' + (p.prenom || ''))}">${api.esc(p.assemblee || '')}</option>`).join('')}</datalist>
+        <datalist id="rPers">${moi ? `<option value="${api.esc(moi.nom + ' ' + moi.prenom)}">Responsable de circonscription${code ? ' (RC ' + api.esc(code) + ')' : ''}</option>` : ''}${anciens.filter(p => !moi || api.norm(p.nom + ' ' + p.prenom) !== api.norm(moi.nom + ' ' + moi.prenom)).map(p => `<option value="${api.esc((p.nom || '').toUpperCase() + ' ' + (p.prenom || ''))}">${pioSt(p) ? pioSt(p) + ' · ' : 'non pionnier · '}${api.esc(p.assemblee || '')}</option>`).join('')}</datalist>
         <datalist id="rPart">${['Interview (2 min)', 'Interview (3 min)', 'Interview (4 min)', 'Deux interviews', 'Démonstration (2 min)', 'Deux démonstrations (2 min)', 'Expérience'].map(x => `<option value="${x}">`).join('')}</datalist>
         <div class="row">${Object.entries(X.TYPES).map(([k, l]) => `<button class="btn" data-addt="${k}">+ ${l}</button>`).join('')}</div>
-        <p class="small muted" style="margin:0">Orateurs : seuls les anciens de l’annuaire sont proposés (${anciens.length}). Les horaires se calculent à partir de l’heure de début et des durées. Les parties consécutives d’un même exposé sont numérotées et regroupées dans le programme. Vos propres participations n’ont pas de lettre.</p></div>`;
+        <p class="small muted" style="margin:0">Orateurs : ${moi ? 'vous-même (responsable de circonscription) et ' : ''}les anciens de l’annuaire (${anciens.length}, dont ${nPio} pionnier(s) PP ou PS proposés en premier) ; vos propres sujets n’ont pas de lettre. Les horaires se calculent à partir de l’heure de début et des durées. Les parties consécutives d’un même exposé sont numérotées et regroupées dans le programme. Vos propres participations n’ont pas de lettre.</p></div>`;
 
     const save = () => api.save();
     api.$('#rSel', el).addEventListener('change', e => { st.id = e.target.value; draw(); });
@@ -419,7 +428,7 @@ App.registerSkill({
       const tr = e.target.closest('tr[data-i]'); if (!tr) return; const it = R.items[+tr.dataset.i], c = e.target.dataset.c; if (!c) return;
       if (c === 'orateur') { const v = e.target.value.trim(), m = /^([A-ZÀ-Ý'’\- ]{2,}?)\s+([A-ZÀ-Ý][^A-Z].*)$/.exec(v);
         if (m) { it.nom = m[1].trim(); it.prenom = m[2].trim(); } else { const [a, ...b] = v.split(' '); it.nom = (a || '').toUpperCase(); it.prenom = b.join(' '); }
-        const p = ancienOf(it); if (p) it.asm = p.assemblee || it.asm;
+        const p = ancienOf(it); if (moi && X.isMe(it)) it.asm = moi.asm; else if (p) it.asm = p.assemblee || it.asm;
         else if (it.nom && !X.isMe(it) && anciens.length) api.toast(`${X.nomOf(it)} n’est pas ancien dans l’annuaire : les orateurs de la réunion des pionniers sont des anciens.`, 'error'); }
       else if (e.target.type === 'checkbox') it[c] = e.target.checked;
       else if (c === 'duree') it.duree = Math.max(0, Number(e.target.value) || 0);
