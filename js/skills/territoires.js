@@ -16,8 +16,12 @@ App.registerSkill({
     const lastCycle = () => [...(circ().cycles || [])].sort((a, b) => a.code.localeCompare(b.code)).at(-1);
     let state = {asm: null, filter: null, q: ''};
 
-    const bar = counts => { const tot = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
-      return `<div style="display:flex;height:16px;border-radius:5px;overflow:hidden;border:1px solid var(--line,#ddd)">${CATS.map(c => counts[c.k] ? `<div title="${c.l} : ${counts[c.k]}" style="width:${counts[c.k] / tot * 100}%;background:${c.c}"></div>` : '').join('')}</div>`; };
+    // Résultat partiel (seulement le total et les « plus de 12 mois ») : les autres catégories sont regroupées
+    const REC = {k: 'rec', l: 'moins de 12 mois', e: '🔹', c: '#5b86b8'};
+    const catsOf = r => r.partiel ? [REC, CATS.find(c => c.k === 'p12')] : CATS;
+    const val = (r, k) => k === 'rec' ? r.total - (r.counts.p12 || 0) : r.counts[k] ?? null;
+    const bar = r => { const tot = r.total || 1;
+      return `<div style="display:flex;height:16px;border-radius:5px;overflow:hidden;border:1px solid var(--line,#ddd)">${catsOf(r).map(c => val(r, c.k) ? `<div title="${c.l} : ${val(r, c.k)}" style="width:${val(r, c.k) / tot * 100}%;background:${c.c}"></div>` : '').join('')}</div>`; };
 
     function home() {
       const A = store().analyses, list = asmList();
@@ -26,7 +30,7 @@ App.registerSkill({
         <button class="btn primary" id="tImp">Importer un S-13 (PDF)</button><button class="btn" id="tMan" title="S-13 remplis à la main : tapez directement le résultat de l’analyse (nombre de territoires par catégorie)">✍️ Saisir le résultat</button></div></div>
         <div class="card"><div class="table-wrap"><table class="list"><thead><tr><th>Assemblée</th><th>Analyse du</th><th style="text-align:right">Territoires</th>${CATS.map(c => `<th style="text-align:right" title="${c.l}">${c.e}</th>`).join('')}<th style="text-align:right">⚫ %</th><th style="min-width:140px"></th></tr></thead><tbody>
         ${list.map(a => { const r = (A[a] || [])[0];
-          return `<tr data-open="${api.esc(a)}" style="cursor:pointer"><td><strong>${api.esc(a)}</strong></td>${r ? `<td>${fr(r.date)}</td><td style="text-align:right">${r.total}</td>${CATS.map(c => `<td style="text-align:right">${r.counts[c.k]}</td>`).join('')}<td style="text-align:right"><strong>${pc(r.counts.p12, r.total)}</strong></td><td>${bar(r.counts)}</td>`
+          return `<tr data-open="${api.esc(a)}" style="cursor:pointer"><td><strong>${api.esc(a)}</strong></td>${r ? `<td>${fr(r.date)}</td><td style="text-align:right">${r.total}</td>${CATS.map(c => `<td style="text-align:right">${r.counts[c.k] ?? '<span class="muted">—</span>'}</td>`).join('')}<td style="text-align:right"><strong>${pc(r.counts.p12, r.total)}</strong></td><td>${bar(r)}</td>`
             : `<td colspan="${CATS.length + 4}" class="muted small">Pas encore analysé</td>`}</tr>`; }).join('') || `<tr><td colspan="${CATS.length + 5}" class="muted">Aucune assemblée : importez d’abord les listes dans l’annuaire ou la circonscription.</td></tr>`}
         </tbody></table></div>
         <p class="small muted" style="margin:8px 0 0">Catégories : ${CATS.map(c => `${c.e} ${c.l}`).join(' · ')} (sans date : ⚫).</p></div>`;
@@ -54,29 +58,47 @@ App.registerSkill({
     /* Résultat saisi à la main (S-13 remplis à la main, analysés sur papier) : nombre de territoires par catégorie.
        Aucune liste de territoires : seuls les totaux sont gardés (report dans le cycle, PDF, évolution). */
     async function saisie(asm) {
-      const H = store().analyses[asm] || [], r0 = H[0], c0 = r0?.counts || {};
+      const H = store().analyses[asm] || [], r0 = H[0], c0 = r0?.counts || {}, part0 = !!r0?.partiel;
       const res = await api.modal({title: `✍️ Résultat de l’analyse S-13 — ${asm}`,
         body: `<div class="stack" style="gap:10px">
-          <p class="small muted" style="margin:0">Tapez le nombre de territoires de chaque catégorie, selon la date la plus récente de chaque territoire. Le total se calcule tout seul.</p>
+          <div class="row" style="gap:16px;flex-wrap:wrap">
+            <label><input type="radio" name="rMode" value="detail" ${part0 ? '' : 'checked'}> Détail par catégorie (6 cases)</label>
+            <label><input type="radio" name="rMode" value="partiel" ${part0 ? 'checked' : ''}> Seulement le total et les non parcourus depuis plus d’un an</label></div>
           <label class="field"><span>Date de l’analyse</span><input type="date" id="rDate" value="${S13Iso(today())}" style="max-width:180px"></label>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
-          ${CATS.map(c => `<label class="field" style="margin:0"><span><span style="color:${c.c}">${c.e}</span> ${c.l}</span><input type="number" min="0" step="1" inputmode="numeric" data-k="${c.k}" value="${c0[c.k] ?? ''}" placeholder="0"></label>`).join('')}
-          </div>
-          <div style="font-size:1.05rem">Total : <strong id="rTot">0</strong> territoires</div></div>`,
+          <div id="rDetail" class="stack" style="gap:8px">
+            <p class="small muted" style="margin:0">Tapez le nombre de territoires de chaque catégorie, selon la date la plus récente de chaque territoire. Le total se calcule tout seul.</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+            ${CATS.map(c => `<label class="field" style="margin:0"><span><span style="color:${c.c}">${c.e}</span> ${c.l}</span><input type="number" min="0" step="1" inputmode="numeric" data-k="${c.k}" value="${part0 ? '' : c0[c.k] ?? ''}" placeholder="0"></label>`).join('')}
+            </div>
+            <div style="font-size:1.05rem">Total : <strong id="rTot">0</strong> territoires</div></div>
+          <div id="rPart" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
+            <label class="field" style="margin:0"><span>Nombre total de territoires</span><input type="number" min="1" step="1" inputmode="numeric" id="rTotal" value="${r0?.total ?? ''}"></label>
+            <label class="field" style="margin:0"><span>⚫ Non parcourus depuis plus d’un an</span><input type="number" min="0" step="1" inputmode="numeric" id="rP12" value="${c0.p12 ?? ''}"></label></div></div>`,
         actions: [{label: 'Annuler', value: null}, {label: 'Enregistrer', kind: 'primary', onClick: b => {
-          const counts = Object.fromEntries(CATS.map(c => [c.k, Math.max(0, Math.round(+api.$(`[data-k=${c.k}]`, b).value || 0))]));
-          const total = Object.values(counts).reduce((a, x) => a + x, 0), date = api.$('#rDate', b).value || S13Iso(today());
-          if (!total) { api.toast('Indiquez au moins un territoire', 'error'); return false; }
+          const date = api.$('#rDate', b).value || S13Iso(today()), num = x => Math.max(0, Math.round(+x.value || 0));
           if (date > S13Iso(today())) { api.toast('La date de l’analyse est dans le futur', 'error'); return false; }
-          return {counts, total, date}; }}],
+          if (api.$('input[name=rMode]:checked', b).value === 'partiel') {
+            const total = num(api.$('#rTotal', b)), p12 = num(api.$('#rP12', b));
+            if (!total) { api.toast('Indiquez le nombre total de territoires', 'error'); return false; }
+            if (p12 > total) { api.toast('Les non parcourus ne peuvent pas dépasser le total', 'error'); return false; }
+            return {partiel: true, counts: Object.fromEntries(CATS.map(c => [c.k, c.k === 'p12' ? p12 : null])), total, date};
+          }
+          const counts = Object.fromEntries(CATS.map(c => [c.k, num(api.$(`[data-k=${c.k}]`, b))]));
+          const total = Object.values(counts).reduce((a, x) => a + x, 0);
+          if (!total) { api.toast('Indiquez au moins un territoire', 'error'); return false; }
+          return {partiel: false, counts, total, date}; }}],
         onMount: b => {
           const upd = () => { api.$('#rTot', b).textContent = CATS.reduce((a, c) => a + (Math.round(+api.$(`[data-k=${c.k}]`, b).value) || 0), 0); };
+          const mode = () => { const p = api.$('input[name=rMode]:checked', b).value === 'partiel'; api.$('#rDetail', b).style.display = p ? 'none' : ''; api.$('#rPart', b).style.display = p ? 'grid' : 'none';
+            const f = p ? api.$('#rTotal', b) : api.$('[data-k]', b); f.focus(); f.select(); };
           b.addEventListener('input', upd); upd();
-          const ins = api.$$('[data-k]', b); ins.forEach((x, n) => x.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); (ins[n + 1] || x).focus(); } }));
-          ins[0].focus(); ins[0].select();
+          api.$$('input[name=rMode]', b).forEach(x => x.addEventListener('change', mode));
+          const chain = list => list.forEach((x, n) => x.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); (list[n + 1] || x).focus(); } }));
+          chain(api.$$('[data-k]', b)); chain([api.$('#rTotal', b), api.$('#rP12', b)]);
+          mode();
         }});
       if (!res) return;
-      const entry = {id: api.uid(), format: 'manuel', docName: 'Résultat saisi à la main', imported: new Date().toISOString(), pages: 0, total: res.total, counts: res.counts, list: [], warn: [], date: res.date};
+      const entry = {id: api.uid(), format: 'manuel', partiel: res.partiel, docName: 'Résultat saisi à la main', imported: new Date().toISOString(), pages: 0, total: res.total, counts: res.counts, list: [], warn: [], date: res.date};
       const A = store().analyses; A[asm] ??= [];
       if (A[asm][0] && A[asm][0].format === 'manuel' && A[asm][0].date === entry.date) A[asm][0] = entry; else A[asm].unshift(entry);
       A[asm].sort((a, b) => b.date.localeCompare(a.date)); A[asm] = A[asm].slice(0, 6); api.save();
@@ -87,19 +109,19 @@ App.registerSkill({
     function view() {
       const asm = state.asm, H = store().analyses[asm] || [], r = H[0];
       if (!r) return home();
-      const prev = H[1], cyc = lastCycle(), sum = Object.values(r.counts).reduce((a, b) => a + b, 0);
+      const prev = H[1], cyc = lastCycle(), sum = r.partiel ? r.total : Object.values(r.counts).reduce((a, b) => a + b, 0);
       const rows = r.list.filter(t => (!state.filter || t.cat === state.filter) && (!state.q || api.norm(t.id).includes(api.norm(state.q))));
       el.innerHTML = `<div class="page-head"><div><h1>🗺️ ${api.esc(asm)}</h1><p>Analyse du S-13 au <strong>${fr(r.date)}</strong> · ${r.format === 'manuel' ? 'résultat saisi à la main' : api.esc(r.docName) + ' · ' +  `présentation ${r.format === 'colonnes' ? 'S-13-Z (territoires en colonnes)' : 'en tableau (un territoire par ligne)'}`}</p></div>
         <div class="row"><button class="btn" id="tBack">← Toutes les assemblées</button><button class="btn" id="tNew">Importer un nouveau S-13</button><button class="btn" id="tMan">${r.format === 'manuel' ? '✍️ Modifier le résultat' : '✍️ Saisir le résultat'}</button></div></div>
         <div class="card" style="margin-bottom:14px">
           <div style="font-size:1.05rem">${r.format === 'manuel' ? 'Résultat saisi à la main' : `<strong>${r.pages}</strong> page${r.pages > 1 ? 's' : ''}`} · <strong>${r.total}</strong> territoires
-            ${sum === r.total ? '<span class="pill" style="background:#e3f4ea;color:#1d5a35">✓ total des 6 catégories = nombre de territoires</span>' : `<span class="pill" style="background:#fdecec;color:#8a1f1f">⚠ total des catégories : ${sum}</span>`}</div>
+            ${r.partiel ? '<span class="pill">résultat partiel : total et non parcourus depuis plus d’un an</span>' : sum === r.total ? '<span class="pill" style="background:#e3f4ea;color:#1d5a35">✓ total des 6 catégories = nombre de territoires</span>' : `<span class="pill" style="background:#fdecec;color:#8a1f1f">⚠ total des catégories : ${sum}</span>`}</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:12px 0">
-          ${CATS.map(c => { const d = prev ? r.counts[c.k] - prev.counts[c.k] : null;
+          ${catsOf(r).map(c => { const a = val(r, c.k), z = prev ? val(prev, c.k) : null, d = a !== null && z !== null ? a - z : null;
             return `<button class="card" data-cat="${c.k}" style="text-align:left;padding:8px 10px;cursor:pointer;border:2px solid ${state.filter === c.k ? c.c : 'transparent'};background:#fff">
-              <div class="small muted">${c.e} ${c.l}</div><div style="font-size:1.5rem;font-weight:700;color:${c.c}">${r.counts[c.k]}</div>
-              <div class="small">${pc(r.counts[c.k], r.total)}${d !== null && d !== 0 ? ` <span class="muted">(${d > 0 ? '+' : ''}${d} vs ${fr(prev.date)})</span>` : ''}</div></button>`; }).join('')}
-          </div>${bar(r.counts)}
+              <div class="small muted">${c.e} ${c.l}</div><div style="font-size:1.5rem;font-weight:700;color:${c.c}">${a}</div>
+              <div class="small">${pc(a, r.total)}${d !== null && d !== 0 ? ` <span class="muted">(${d > 0 ? '+' : ''}${d} vs ${fr(prev.date)})</span>` : ''}</div></button>`; }).join('')}
+          </div>${bar(r)}
           ${r.warn.length ? `<div class="notice warn small" style="margin-top:10px">${r.warn.map(api.esc).join('<br>')}</div>` : ''}
           <div class="row" style="margin-top:12px;flex-wrap:wrap">
             ${cyc ? `<button class="btn primary" id="tReport">Reporter dans le cycle ${api.esc(cyc.code)} (Territoires ${r.total} · Non parcourus depuis 1 an ${r.counts.p12})</button>` : ''}
@@ -149,18 +171,18 @@ App.registerSkill({
       newPage();
       txt(`Analyse du S-13 — ${asm}`, M, y - 16, {size: 18, bold: true, color: blue}); if (App.circoNom()) txt(App.circoNom(), M, y - 30, {size: 9, color: mute}); y -= App.circoNom() ? 44 : 34;
       txt(r.format === 'manuel' ? `Au ${fr(r.date)} · ${r.total} territoires · résultat saisi à la main` : `Au ${fr(r.date)} · ${r.pages} pages · ${r.total} territoires · fichier « ${r.docName} »`, M, y, {size: 10, color: mute}); y -= 26;
-      const bw = (W - 2 * M - 5 * 8) / 6;
-      CATS.forEach((c, i) => { const x = M + i * (bw + 8);
+      const PC = catsOf(r), bw = (W - 2 * M - 5 * 8) / 6;
+      PC.forEach((c, i) => { const x = M + i * (bw + 8);
         page.drawRectangle({x, y: y - 56, width: bw, height: 56, borderColor: hex(c.c), borderWidth: 1.5, color: rgb(1, 1, 1)});
         page.drawRectangle({x, y: y - 14, width: bw, height: 14, color: hex(c.c)});
         const lab = T(c.l); page.drawText(lab, {x: x + (bw - R.widthOfTextAtSize(lab, 7.5)) / 2, y: y - 10.5, size: 7.5, font: B, color: rgb(1, 1, 1)});
-        const v = String(r.counts[c.k]); page.drawText(v, {x: x + (bw - B.widthOfTextAtSize(v, 20)) / 2, y: y - 38, size: 20, font: B, color: hex(c.c)});
-        const p = pc(r.counts[c.k], r.total); page.drawText(T(p), {x: x + (bw - R.widthOfTextAtSize(T(p), 8.5)) / 2, y: y - 51, size: 8.5, font: R, color: mute}); });
+        const v = String(val(r, c.k)); page.drawText(v, {x: x + (bw - B.widthOfTextAtSize(v, 20)) / 2, y: y - 38, size: 20, font: B, color: hex(c.c)});
+        const p = pc(val(r, c.k), r.total); page.drawText(T(p), {x: x + (bw - R.widthOfTextAtSize(T(p), 8.5)) / 2, y: y - 51, size: 8.5, font: R, color: mute}); });
       y -= 70;
-      let bx = M; for (const c of CATS) { const w = r.total ? (W - 2 * M) * r.counts[c.k] / r.total : 0; if (w) page.drawRectangle({x: bx, y: y - 12, width: w, height: 12, color: hex(c.c)}); bx += w; }
+      let bx = M; for (const c of PC) { const w = r.total ? (W - 2 * M) * val(r, c.k) / r.total : 0; if (w) page.drawRectangle({x: bx, y: y - 12, width: w, height: 12, color: hex(c.c)}); bx += w; }
       y -= 30;
-      const sum = Object.values(r.counts).reduce((a, b) => a + b, 0);
-      txt(sum === r.total ? `Contrôle : total des 6 catégories = ${sum} = nombre de territoires.` : `Attention : total des catégories ${sum} ≠ ${r.total} territoires.`, M, y, {size: 9, color: sum === r.total ? rgb(.11, .45, .25) : rgb(.8, .1, .1)}); y -= 22;
+      const sum = r.partiel ? r.total : Object.values(r.counts).reduce((a, b) => a + b, 0);
+      txt(r.partiel ? `Résultat partiel : ${r.counts.p12} territoire(s) non parcouru(s) depuis plus d’un an sur ${r.total}.` : sum === r.total ? `Contrôle : total des 6 catégories = ${sum} = nombre de territoires.` : `Attention : total des catégories ${sum} ≠ ${r.total} territoires.`, M, y, {size: 9, color: sum === r.total ? rgb(.11, .45, .25) : rgb(.8, .1, .1)}); y -= 22;
       const ncol = 5, cw = (W - 2 * M) / ncol, lh = 11;
       for (const c of [...CATS].reverse()) {
         const items = r.list.filter(t => t.cat === c.k); if (!items.length) continue;
