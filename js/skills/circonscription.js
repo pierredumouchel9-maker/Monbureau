@@ -1099,6 +1099,7 @@ App.circo = (() => {
     if (p.fonction === 'Ancien') return 'background:#1f3f66;color:#fff';
     if (p.fonction === 'Assistant') return 'background:#d6e6f7;color:#1f2328';
     if (e.statut === 'PP') return 'background:#fbd9b5;color:#1f2328';
+    if (e.statut === 'PAP') return 'background:#fdeedd;color:#1f2328';   // orange plus léger que les PP
     if (e.statut === 'PS') return 'background:#f8cfcf;color:#1f2328';
     return '';
   }
@@ -1358,6 +1359,7 @@ App.circo = (() => {
       <div class="row small" style="margin-bottom:10px;gap:14px"><span><span style="display:inline-block;width:12px;height:12px;background:#1f3f66;border-radius:3px;vertical-align:-2px"></span> Ancien</span>
         <span><span style="display:inline-block;width:12px;height:12px;background:#d6e6f7;border:1px solid #9bb;border-radius:3px;vertical-align:-2px"></span> Assistant</span>
         <span><span style="display:inline-block;width:12px;height:12px;background:#fbd9b5;border-radius:3px;vertical-align:-2px"></span> PP</span>
+        <span><span style="display:inline-block;width:12px;height:12px;background:#fdeedd;border:1px solid #f3d3b0;border-radius:3px;vertical-align:-2px"></span> PAP</span>
         <span><span style="display:inline-block;width:12px;height:12px;background:#f8cfcf;border-radius:3px;vertical-align:-2px"></span> PS</span>
         <span><span style="display:inline-block;width:12px;height:12px;background:#e3e3e3;border-radius:3px;vertical-align:-2px"></span> IN</span>
         <span><span style="display:inline-block;width:5px;height:12px;background:#f59e0b;vertical-align:-2px"></span> trait orange : ancien ou assistant pionnier permanent</span></div>
