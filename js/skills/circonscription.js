@@ -1269,6 +1269,14 @@ App.circo = (() => {
     onDone && onDone();
   }
 
+  // Filtres de la liste des proclamateurs, par groupe
+  const PF = [
+    {g: 'Statut', items: [['ACTIF', 'Actifs'], ['PNB', 'PNB'], ['IN', 'IN'], ['PP', 'PP'], ['PAP', 'PAP'], ['PS', 'PS'], ['NP', 'Non proclamateurs']]},
+    {g: 'Fonction', items: [['Ancien', 'Anciens'], ['Assistant', 'Assistants']]},
+    {g: 'Suivi', items: [['EVT', 'Avec une évolution'], ['SIG', 'Lignes surlignées'], ['S21', 'S-21 non pointées']]}];
+  const PF_GROUP = k => PF.find(x => x.items.some(i => i[0] === k))?.g || 'Statut';
+  const PF_LIB = k => PF.flatMap(x => x.items).find(i => i[0] === k)?.[1] || k;
+
   function proclamateursView(el, state) {
     const S = store(), cycles = sortedCycles();
     const asms = S.assemblees.filter(a => !isGroup(a));
@@ -1288,7 +1296,12 @@ App.circo = (() => {
     const sigsOf = r => sigList(c, r.p, r.e, prevStatut(c, r.p), evtOf(r));
     const sigOf = r => sigsOf(r)[0] || '';
     const sigHas = (r, x) => sigsOf(r).includes(x);
-    const shown = rows.filter(r => { const {p, e} = r; return (!state.filt || (state.filt === 'Ancien' || state.filt === 'Assistant' ? p.fonction === state.filt : state.filt === 'ACTIF' ? ACTIF(e.statut) : state.filt === 'EVT' ? !!(e.evt || autoEvt(prevStatut(c, p), e.statut)) : state.filt === 'SIG' ? !!sigOf(r) : state.filt === 'S21' ? !e.s21 && !DEPARTS.includes(e.evt) && (ACTIF(e.statut) || e.statut === 'PNB') : e.statut === state.filt)); })
+    // filtres cumulables : dans un même groupe = « ou », entre groupes = « et »
+    if (state.filt && !state.filts) state.filts = [state.filt];
+    const fset = new Set(state.filts || []);
+    const hit = ({p, e}, k) => k === 'Ancien' || k === 'Assistant' ? (fonctionAt(c, p) ?? p.fonction) === k : k === 'ACTIF' ? ACTIF(e.statut) : k === 'EVT' ? !!(e.evt || autoEvt(prevStatut(c, p), e.statut)) : k === 'SIG' ? !!sigOf({p, e}) : k === 'S21' ? !e.s21 && !DEPARTS.includes(e.evt) && (ACTIF(e.statut) || e.statut === 'PNB') : e.statut === k;
+    const fgroups = {}; for (const k of fset) (fgroups[PF_GROUP(k)] ??= []).push(k);
+    const shown = rows.filter(r => Object.values(fgroups).every(ks => ks.some(k => hit(r, k))))
       .filter(({p, e}) => true
       && (!state.q || api.norm(p.nom + ' ' + p.prenom).includes(api.norm(state.q))));
     // un radié reste proclamateur (compté selon son statut) ; un déménagement ou un décès n'est plus compté
@@ -1364,7 +1377,11 @@ App.circo = (() => {
         <span><span style="display:inline-block;width:12px;height:12px;background:#e3e3e3;border-radius:3px;vertical-align:-2px"></span> IN</span>
         <span><span style="display:inline-block;width:5px;height:12px;background:#f59e0b;vertical-align:-2px"></span> trait orange : ancien ou assistant pionnier permanent</span></div>
       <div class="row" style="margin-bottom:10px"><input type="search" id="pQ" placeholder="Rechercher un nom" value="${api.esc(state.q || '')}" style="max-width:260px">
-        <select id="pF" style="width:auto"><option value="">Tous</option>${[['ACTIF', 'Actifs'], ['PNB', 'PNB'], ['IN', 'IN'], ['PP', 'PP'], ['PAP', 'PAP'], ['PS', 'PS'], ['NP', 'Non proclamateurs'], ['EVT', 'Avec une évolution'], ['SIG', 'Lignes surlignées'], ['S21', 'S-21 non pointées'], ['Ancien', 'Anciens'], ['Assistant', 'Assistants']].map(([v, l]) => `<option value="${v}" ${state.filt === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <details class="dd" id="pDd" style="position:relative" ${state.ddOpen ? 'open' : ''}><summary class="btn">Filtres ${fset.size ? `(${fset.size})` : ''} ▾</summary>
+          <div class="card" style="position:absolute;z-index:30;min-width:280px;margin-top:4px;padding:10px">
+          ${PF.map(x => `<div class="small muted" style="margin:6px 0 2px;font-weight:600">${x.g}</div>${x.items.map(([k, l]) => `<label style="display:block;padding:2px 0"><input type="checkbox" data-pf="${k}" ${fset.has(k) ? 'checked' : ''}> ${l}</label>`).join('')}`).join('')}
+          <p class="small muted" style="margin:8px 0 0">Plusieurs cases d’un même groupe : l’une <em>ou</em> l’autre. Cases de groupes différents : les deux à la fois (ex. PP + Anciens = anciens pionniers permanents).</p></div></details>
+        ${fset.size ? `${[...fset].map(k => `<span class="pill" style="display:inline-flex;gap:6px;align-items:center">${PF_LIB(k)}<button class="btn ghost" data-unpf="${k}" style="padding:0 4px;min-height:0;line-height:1">✕</button></span>`).join('')}<button class="btn ghost" id="pRaz">✕ Effacer</button>` : ''}
         <span class="small muted">${shown.length} affiché(s) · <strong>S-21 validées : ${live.filter(r => r.e.s21 && (ACTIF(r.e.statut) || r.e.statut === 'PNB')).length} / ${live.filter(r => ACTIF(r.e.statut) || r.e.statut === 'PNB').length} proclamateurs</strong> · les saisies sont enregistrées automatiquement</span></div>
       <details class="small muted" style="margin-bottom:8px"><summary style="cursor:pointer">Aide sur les statuts, les surlignages et le suivi</summary><p style="margin:6px 0 0">Un proclamateur est nécessairement baptisé : « Non proclamateur » désigne une personne de l’annuaire qui n’est ni proclamateur ni PNB. Une ligne est surlignée en jaune pour un nouveau PNB, un baptême, un nouveau PP, un nouveau PAP ou une proposition comme ancien ou assistant : les quatre premiers cas sont repérés automatiquement (« auto »), les propositions se choisissent dans la colonne « Évolution / à signaler ». La colonne « Suivi » accepte vos notes libres pour le cycle. L’évolution est déduite du statut au cycle précédent (« auto ») ; vous pouvez aussi la choisir vous-même, par exemple « Emménagement » pour un nouveau proclamateur arrivé dans l’assemblée.<br>PNB : proclamateur non baptisé · IN : inactif · PP : pionnier permanent (objectif ${HEURES_MOIS} h/mois) · PAP : pionnier auxiliaire permanent · PS : pionnier spécial · PA : nombre de fois pionnier auxiliaire dans le cycle (sans objet pour les PP et PAP) ; le bilan compte les proclamateurs qui ont été PA, une seule fois chacun · IR : nombre de fois irrégulier.</p></details>
       <div class="table-wrap sticky"><table class="list" id="pTab"><thead><tr><th class="s21" title="Fiche d’activité (S-21) vérifiée pour ce cycle">S-21</th><th>Proclamateur · fonction</th><th>Statut</th><th style="text-align:right">Âge</th><th style="text-align:right;white-space:nowrap" title="Nombre d’années depuis le baptême">Baptême</th><th>Évolution / à signaler</th><th style="width:1%;white-space:nowrap">Heures PP</th><th style="text-align:center">Études bibliques</th><th style="text-align:center">PA</th><th style="text-align:center">IR</th><th style="min-width:220px">Suivi</th></tr></thead><tbody>
@@ -1432,7 +1449,15 @@ App.circo = (() => {
     });
     api.$('#pMois', el).addEventListener('change', e => { const v = Number(e.target.value); c.mois = v >= 1 && v <= 12 ? v : undefined; api.save(); redraw(); });
     api.$('#pQ', el).addEventListener('input', e => { state.q = e.target.value; clearTimeout(state.t); state.t = setTimeout(() => { redraw(); const i = api.$('#pQ', el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); });
-    api.$('#pF', el).addEventListener('change', e => { state.filt = e.target.value; redraw(); });
+    // filtres cumulables (le menu reste ouvert pendant qu'on coche)
+    const setF = (k, on) => { const f = new Set(state.filts || []); on ? f.add(k) : f.delete(k); state.filts = [...f]; state.filt = ''; redraw(); };
+    el.querySelectorAll('[data-pf]').forEach(x => x.addEventListener('change', () => { state.ddOpen = true; setF(x.dataset.pf, x.checked); }));
+    el.querySelectorAll('[data-unpf]').forEach(x => x.addEventListener('click', () => setF(x.dataset.unpf, false)));
+    api.$('#pRaz', el)?.addEventListener('click', () => { state.filts = []; state.filt = ''; redraw(); });
+    const dd = api.$('#pDd', el); dd.addEventListener('toggle', () => { state.ddOpen = dd.open; });
+    if (el._pdOut) document.removeEventListener('click', el._pdOut);
+    el._pdOut = e => { if (!el.isConnected) return document.removeEventListener('click', el._pdOut); const d2 = api.$('#pDd', el); if (d2 && !e.target.closest('#pDd')) { d2.open = false; state.ddOpen = false; } };
+    document.addEventListener('click', el._pdOut);
     api.$('#pImp', el).addEventListener('click', () => importSuiviFlow(redraw));
     api.$('#pPartis', el)?.addEventListener('click', async () => {
       if (!await api.confirm('Retirer de l’annuaire', `${partis.length} personne(s) vont être retirées de l’annuaire. Leur trace reste dans le cycle où le départ a été noté. Continuer ?`, 'Retirer', true)) return;
