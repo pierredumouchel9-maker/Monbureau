@@ -1,13 +1,18 @@
 /* Service worker : met l'application en cache pour qu'elle fonctionne sans connexion.
    Ne contient jamais de données personnelles (elles sont dans IndexedDB, chiffrées). */
-const CACHE = 'mon-bureau-v0.36.0';
+const CACHE = 'mon-bureau-v0.36.1';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png',
   'lib/pdf-lib.min.js', 'lib/pdfjs/pdf.min.mjs', 'lib/pdfjs/pdf.worker.min.mjs', 'js/core.js', 'js/circos.js', 'js/files.js', 'js/pdf.js', 'js/sync.js', 'js/organigramme.js', 'js/s13.js', 'js/mailer.js',
   'js/skills/accueil.js', 'js/skills/annuaire.js', 'js/skills/modeles.js', 'js/skills/coffre.js',
   'js/skills/sauvegarde.js', 'js/skills/parametres.js', 'js/skills/gestion-skills.js', 'js/skills/circonscription.js', 'js/skills/itineraire.js', 'js/skills/territoires.js', 'js/skills/reunion-pp.js', 'js/skills/emr.js', 'js/skills/a-venir.js'
 ];
-self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
+// Installation : chaque fichier est mis en cache séparément ; un fichier manquant sur le serveur
+// (oublié lors d'une mise en ligne) n'empêche plus l'installation de la nouvelle version.
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => Promise.all(FILES.map(f => c.add(new Request(f, {cache: 'reload'})).catch(err => console.warn('Non mis en cache :', f, err)))))
+    .then(() => self.skipWaiting()));
+});
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
