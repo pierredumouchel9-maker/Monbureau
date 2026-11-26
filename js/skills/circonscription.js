@@ -222,6 +222,112 @@ App.circo = (() => {
   }
 
   /* ---------- Tableau de bord ---------- */
+  /* ---------- Bilan PDF du cycle pour toute la circonscription : 1 page A4 paysage ----------
+     Chiffres clés, tableau de tous les indicateurs par assemblée (écart avec le cycle précédent),
+     totaux, pourcentages, moyennes, remarques et baptêmes de l'année de service. */
+  async function cyclePdf(c, withGroups) {
+    const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
+    const S = store(), prev = prevCycle(c), tot = totals(c), asmsAll = S.assemblees, asmsN = asmsAll.filter(a => !isGroup(a));
+    const doc = await PDFDocument.create(), R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold), I = await doc.embedFont(StandardFonts.HelveticaOblique);
+    doc.setTitle(T(`Bilan du cycle ${c.code}`));
+    const W = 841.89, H = 595.28, M = 22, page = doc.addPage([W, H]);
+    const hex = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
+    const ink = hex('#1f2328'), mute = hex('#6b7280'), blue = hex('#1f3f66'), line = hex('#d0d7de'), zebra = hex('#f3f5f8'), green = hex('#1a7f37'), red = hex('#c0392b'), head = hex('#e4ebf3');
+    const tw = (t, f, z) => f.widthOfTextAtSize(T(t), z);
+    const fit = (t, f, z, w) => { t = T(t); if (f.widthOfTextAtSize(t, z) <= w) return t; while (t.length > 1 && f.widthOfTextAtSize(t + '…', z) > w) t = t.slice(0, -1); return t + '…'; };
+    const txt = (t, x, y, o = {}) => page.drawText(o.w ? fit(t, o.font || R, o.size || 8, o.w) : T(t), {x, y, size: o.size || 8, font: o.font || R, color: o.color || ink});
+    const right = (t, xr, y, o = {}) => txt(t, xr - tw(t, o.font || R, o.size || 8), y, o);
+    const dTxt = d => `${d > 0 ? '+' : ''}${fmt(d)}`;
+    // en-tête
+    let y = H - M - 14;
+    txt(`Bilan du cycle ${c.code}`, M, y, {font: B, size: 15, color: blue});
+    txt(c.libelle || '', M + tw(`Bilan du cycle ${c.code}`, B, 15) + 10, y + 1, {size: 9, color: mute, w: 330});
+    if (App.circoNom()) right(App.circoNom(), W - M, y + 1, {font: B, size: 10, color: blue});
+    y -= 6; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: 1, color: blue});
+    const an = parseInt(c.code, 10) - 1, acs = (S.baptemes || []).filter(a => { const [yy, mm] = a.date.split('-').map(Number); return (mm >= 9 ? yy : yy - 1) === an; }).sort((a, b) => a.date.localeCompare(b.date));
+    const nbAC = acs.reduce((t, a) => t + (a.baptises || []).length, 0);
+    // chiffres clés
+    const kpi = [['Proclamateurs', 'procl'], ['Pionniers permanents', 'pp', 'procl'], ['Pionniers auxiliaires', 'pa', 'procl'], ['Études bibliques', 'eb'], ['Assistance semaine', 'sem', 'procl'], ['Assistance week-end', 'we', 'procl'], ['Non parcourus', 'nonparc', 'terr'], ['Baptêmes', 'bapt']];
+    const kw = (W - 2 * M - (kpi.length - 1) * 6) / kpi.length, kh = 40; y -= 6 + kh;
+    kpi.forEach(([lab, k, of], i) => {
+      const x = M + i * (kw + 6), ac = k === 'bapt' && tot.bapt === null && acs.length, v = ac ? nbAC : tot[k], cd = ac ? null : commonDelta(c, prev, k);
+      page.drawRectangle({x, y, width: kw, height: kh, color: hex('#f6f8fb'), borderColor: line, borderWidth: .6});
+      txt(lab, x + 6, y + kh - 11, {size: 7, color: mute, w: kw - 12});
+      txt(v === null ? '—' : fmt(v), x + 6, y + 9, {font: B, size: 15, color: blue});
+      const sub = [ac ? `AC ${an}-${an + 1}` : '', of && v !== null && tot[of] ? `${Math.round(v / tot[of] * 100)} % ${of === 'terr' ? 'des terr.' : 'des procl.'}` : '', cd && cd.d ? `${dTxt(cd.d)} / ${prev.code}` : ''].filter(Boolean);
+      sub.forEach((t, j) => right(t, x + kw - 5, y + 18 - j * 9, {size: 6.5, color: t.includes(' / ') ? (cd.d > 0 ? green : red) : mute}));
+    });
+    // bas de page : baptêmes de l'année de service et remarques
+    const notes = asmsAll.filter(a => (c.notes || {})[a]).map(a => [a, c.notes[a]]);
+    const bottomH = (acs.length || notes.length) ? 16 + Math.max(acs.length ? acs.length * 2 + 1 : 0, Math.min(notes.length, 7)) * 9 + 6 : 0;
+    // tableau des indicateurs
+    const rowsA = asmsAll, nameW = 120, colW = (W - 2 * M - nameW) / IND.length;
+    const tableTop = y - 10, tableBottom = M + 14 + bottomH + 22;
+    const nRows = rowsA.length + 3, rowH = Math.max(10, Math.min(prev ? 17 : 13, (tableTop - tableBottom - 26) / nRows));
+    const vz = Math.min(8, rowH * .55), dz = Math.min(5.8, rowH * .38);
+    y = tableTop;
+    // ligne des groupes
+    let gx = M + nameW;
+    for (const g of GROUPS) { const k = IND.filter(i => i.g === g).length, w = k * colW;
+      page.drawRectangle({x: gx, y: y - 11, width: w - 1, height: 11, color: blue});
+      const t = fit(g, B, 6.8, w - 4); txt(t, gx + (w - tw(t, B, 6.8)) / 2, y - 8.5, {font: B, size: 6.8, color: rgb(1, 1, 1)}); gx += w; }
+    y -= 11;
+    page.drawRectangle({x: M, y: y - 13, width: W - 2 * M, height: 13, color: head});
+    txt('Assemblée', M + 3, y - 9.5, {font: B, size: 7});
+    const ABRV = {vsem: 'V. sem', vwe: 'V. WE', memorial: 'Mémo.', terr: 'Terr.', nonparc: 'N. parc.', totalin: 'Tot. IN', redact: 'R. act.', reprim: 'Répr.', reint: 'Réint.'};
+    IND.forEach((ind, j) => { const t = fit(ABRV[ind.k] || ind.l, B, 6.3, colW - 2); right(t, M + nameW + (j + 1) * colW - 2, y - 9.5, {font: B, size: 6.3}); });
+    y -= 13;
+    const valCell = (x, v, p, bold, col) => {
+      const yy = y - rowH / 2 - (prev && p !== null && v !== null && v !== p ? 0 : vz * .35);
+      if (v !== null) right(fmt(v), x - 2, prev && p !== null && v !== p ? y - rowH * .48 : yy, {size: vz, font: bold ? B : R, color: col || ink});
+      if (prev && v !== null && p !== null && v !== p) right(dTxt(v - p), x - 2, y - rowH * .48 - dz - 1, {size: dz, color: v > p ? green : red});
+    };
+    rowsA.forEach((a, r) => {
+      if (r % 2) page.drawRectangle({x: M, y: y - rowH, width: W - 2 * M, height: rowH, color: zebra});
+      const g = isGroup(a);
+      txt((g ? '  ↳ ' : '') + a, M + 3, y - rowH / 2 - vz * .35, {size: Math.min(vz, 7.4), font: g ? I : B, color: g ? mute : ink, w: nameW - 5});
+      IND.forEach((ind, j) => valCell(M + nameW + (j + 1) * colW, n(c.valeurs[a]?.[ind.k]), prev ? n(prev.valeurs[a]?.[ind.k]) : null, false, g ? mute : null));
+      y -= rowH;
+    });
+    // total, pourcentages, moyennes
+    page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: 1, color: blue});
+    page.drawRectangle({x: M, y: y - rowH, width: W - 2 * M, height: rowH, color: head});
+    txt(withGroups ? 'Total (groupes compris)' : 'Total circonscription', M + 3, y - rowH / 2 - vz * .35, {size: vz, font: B, w: nameW - 5});
+    IND.forEach((ind, j) => { const x = M + nameW + (j + 1) * colW, v = tot[ind.k], cd = commonDelta(c, prev, ind.k);
+      if (v !== null) right(fmt(v), x - 2, cd && cd.d ? y - rowH * .48 : y - rowH / 2 - vz * .35, {size: vz, font: B, color: blue});
+      if (cd && cd.d) right(dTxt(cd.d), x - 2, y - rowH * .48 - dz - 1, {size: dz, color: cd.d > 0 ? green : red}); });
+    y -= rowH;
+    const small = Math.min(9.5, rowH * .75), sz = Math.min(6.5, vz - .5);
+    txt('% procl. / territoires', M + 3, y - small + 2.5, {size: sz, color: mute, w: nameW - 5});
+    IND.forEach((ind, j) => { if (!RATIO[ind.k]) return; let a = 0, b = 0; for (const x of counted()) { const v = n(c.valeurs[x]?.[ind.k]), d = n(c.valeurs[x]?.[RATIO[ind.k]]); if (v !== null && d) { a += v; b += d; } }
+      if (b) right(Math.round(a / b * 100) + ' %', M + nameW + (j + 1) * colW - 2, y - small + 2.5, {size: sz, color: mute}); });
+    y -= small;
+    txt('Moyenne par assemblée', M + 3, y - small + 2.5, {size: sz, color: mute, w: nameW - 5});
+    IND.forEach((ind, j) => { const vals = asmsN.map(a => n(c.valeurs[a]?.[ind.k])).filter(v => v !== null);
+      if (vals.length) right(fmt(Math.round(vals.reduce((x, v) => x + v, 0) / vals.length * 10) / 10), M + nameW + (j + 1) * colW - 2, y - small + 2.5, {size: sz, color: mute}); });
+    y -= small;
+    txt(prev ? `Sous chaque chiffre : écart avec le cycle ${prev.code} (vert : hausse, rouge : baisse). Écarts des totaux calculés sur les assemblées renseignées aux deux cycles.` : 'Pas de cycle précédent pour comparer.', M, y - 8, {size: 6, color: mute});
+    txt('V. sem / V. WE : assistance aux réunions de la visite · Mémo. : Mémorial · Terr. : territoires · N. parc. : non parcourus depuis 1 an · R. act. : redevenus actifs · AC : assemblées de circonscription', M, y - 15, {size: 6, color: mute});
+    // bloc du bas
+    if (bottomH) {
+      let by = M + 14 + bottomH - 10; const colA = acs.length ? (notes.length ? (W - 2 * M) * .45 : W - 2 * M) : 0;
+      if (acs.length) {
+        const all = acs.flatMap(a => a.baptises || []), f = all.filter(x => x.sexe === 'Frère').length, s2 = all.filter(x => x.sexe === 'Sœur').length;
+        txt(`Baptêmes aux assemblées de circonscription ${an}-${an + 1} : ${all.length} (${f} frère${f > 1 ? 's' : ''}, ${s2} sœur${s2 > 1 ? 's' : ''})`, M, by, {font: B, size: 8, color: blue, w: colA - 8});
+        let yy = by - 10;
+        for (const a of acs) { const l = a.baptises || [], ff = l.filter(x => x.sexe === 'Frère').length, ss = l.filter(x => x.sexe === 'Sœur').length;
+          txt(`${a.type} du ${new Date(a.date + 'T12:00').toLocaleDateString('fr-FR', {day: 'numeric', month: 'long', year: 'numeric'})}${a.lieu ? ' (' + a.lieu + ')' : ''} : ${l.length} baptême${l.length > 1 ? 's' : ''} — ${ff} F, ${ss} S`, M, yy, {font: B, size: 7, w: colA - 8});
+          txt(l.map(x => `${(x.nom || '').toUpperCase()} ${x.prenom || ''}${x.asm ? ' (' + x.asm + ')' : ''}`.trim()).join(', ') || '—', M + 8, yy - 9, {size: 6.5, color: mute, w: colA - 16}); yy -= 18; }
+      }
+      if (notes.length) { const x0 = M + colA + (colA ? 10 : 0), w = W - M - x0;
+        txt(`Remarques du cycle ${c.code}`, x0, by, {font: B, size: 8, color: blue}); let yy = by - 10;
+        notes.slice(0, 7).forEach(([a, t], k) => { const lab = a + ' : '; txt(lab, x0, yy, {font: B, size: 6.8}); txt(k === 6 && notes.length > 7 ? `… et ${notes.length - 6} autre(s) remarque(s)` : t, x0 + tw(lab, B, 6.8), yy, {size: 6.8, w: w - tw(lab, B, 6.8)}); yy -= 9; });
+      }
+    }
+    page.drawText(T(`Mon Bureau${App.circoPied()} · bilan du cycle ${c.code} · ${asmsN.length} assemblées · imprimé le ${api.dateLongue()}`), {x: M, y: 10, size: 6.5, font: R, color: mute});
+    return doc.save();
+  }
+
   function dashboard(el, state) {
     const S = store(), cycles = sortedCycles();
     if (!cycles.length) {
@@ -247,7 +353,7 @@ App.circo = (() => {
     };
     el.innerHTML = `${header('dashboard')}<div class="page-head"><div><p style="margin:0" class="muted">${api.esc(c.libelle || 'Cycle ' + c.code)}</p></div>
       <div class="row"><select id="cCycle" style="width:auto">${cycles.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>Cycle ${x.code}</option>`).join('')}</select>
-        <button class="btn" id="cNew">+ Cycle</button><button class="btn" id="cImp">Importer</button><button class="btn" id="cCsv">Exporter (CSV)</button>
+        <button class="btn" id="cNew">+ Cycle</button><button class="btn" id="cImp">Importer</button><button class="btn" id="cCsv">Exporter (CSV)</button><button class="btn" id="cPdf" title="Tous les indicateurs du cycle, par assemblée, sur une page A4 paysage">Bilan PDF du cycle</button>
         <button class="btn ${state.edit ? 'primary' : ''}" id="cEdit">${state.edit ? 'Terminer la saisie' : 'Saisir / corriger'}</button></div></div>
       <div class="grid" style="margin-bottom:16px">
         ${[['procl', 'Proclamateurs'], ['pp', 'Pionniers permanents'], ['sem', 'Assistance semaine'], ['bapt', 'Baptêmes']].map(([k, lab]) => `
@@ -301,6 +407,10 @@ App.circo = (() => {
     api.$('#cImp', el).addEventListener('click', () => importFlow(redraw));
     api.$('#cNew', el).addEventListener('click', () => newCycle(nc => { state.cycle = nc.id; state.edit = true; redraw(); }));
     api.$('#cEdit', el).addEventListener('click', () => { state.edit = !state.edit; if (!state.edit) api.toast('Saisie enregistrée'); redraw(); });
+    api.$('#cPdf', el).addEventListener('click', async () => {
+      try { api.download(App.pdf.fileName(`Bilan circonscription ${c.code}`) + '.pdf', await cyclePdf(c, state.groups), 'application/pdf'); }
+      catch (e) { console.error(e); api.toast('PDF impossible : ' + e.message, 'error'); }
+    });
     api.$('#cCsv', el).addEventListener('click', () => {
       const rows = [['Assemblée', ...IND.map(i => i.t || i.l), 'Remarques']];
       for (const a of S.assemblees) rows.push([a, ...IND.map(i => fmt(n(c.valeurs[a]?.[i.k]))), c.notes[a] || '']);
@@ -1591,12 +1701,112 @@ App.circo = (() => {
     };
   }
 
+  /* ---------- Baptêmes : assemblées de circonscription AC-RC (responsable de circonscription) et AC-RF (représentant de la filiale) ----------
+     Deux assemblées par année de service (septembre → août), dans un ordre qui varie d'une année à l'autre.
+     Pour chacune : la liste des baptisés (nom, prénom, frère ou sœur, assemblée), avec les totaux. */
+  const AC_TYPES = {'AC-RC': 'Assemblée de circonscription avec le responsable de circonscription', 'AC-RF': 'Assemblée de circonscription avec le représentant de la filiale'};
+  const anneeServ = iso => { const [y, m] = iso.split('-').map(Number); return m >= 9 ? y : y - 1; };   // 2026-2027 → 2026
+  const anLib = y => `${y}-${y + 1}`;
+  const jourLong = iso => { const d = new Date(iso + 'T12:00'); return d.toLocaleDateString('fr-FR', {weekday: 'long'}) + ' ' + api.dateLongue(d); };
+  const jourCourt = iso => new Date(iso + 'T12:00').toLocaleDateString('fr-FR', {day: 'numeric', month: 'short', year: 'numeric'});
+  function baptemesView(el, state) {
+    const S = store(), B = S.baptemes ??= [], asms = S.assemblees.filter(a => !isGroup(a));
+    const ans = [...new Set(B.map(a => anneeServ(a.date)))].sort((a, b) => b - a), cur = anneeServ(new Date().toISOString().slice(0, 10));
+    if (!ans.includes(cur)) ans.unshift(cur);
+    ans.sort((a, b) => b - a);
+    const an = state.an ?? (B.length ? anneeServ([...B].sort((a, b) => b.date.localeCompare(a.date))[0].date) : cur); state.an = an;
+    const L = B.filter(a => anneeServ(a.date) === an).sort((a, b) => a.date.localeCompare(b.date));
+    const cnt = list => ({t: list.length, f: list.filter(x => x.sexe === 'Frère').length, s: list.filter(x => x.sexe === 'Sœur').length});
+    const all = L.flatMap(a => a.baptises || []), T = cnt(all);
+    const box = (lib, v, sub) => `<div class="card" style="padding:10px 14px"><div class="small muted">${lib}</div><div style="font-size:1.6rem;font-weight:700">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
+    const fs = c => `${c.f} frère${c.f > 1 ? 's' : ''} · ${c.s} sœur${c.s > 1 ? 's' : ''}${c.t - c.f - c.s ? ` · ${c.t - c.f - c.s} à préciser` : ''}`;
+    // personnes de l'annuaire pour la saisie rapide (PNB d'abord)
+    const pers = api.data.persons.filter(p => p.nom).sort((a, b) => (b.statut === 'PNB') - (a.statut === 'PNB') || (a.nom || '').localeCompare(b.nom || '', 'fr'));
+    const lab = p => `${(p.nom || '').toUpperCase()} ${p.prenom || ''} — ${p.assemblee || ''}`.trim();
+    const PA = {}; for (const x of all) (PA[x.asm || '—'] ??= []).push(x);
+    el.innerHTML = `${header('baptemes')}
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+        <select id="bAn" style="width:auto;font-weight:600">${ans.map(y => `<option value="${y}" ${y === an ? 'selected' : ''}>Année de service ${anLib(y)}</option>`).join('')}</select>
+        <button class="btn primary" id="bNew">+ Assemblée de circonscription</button>
+        <span class="small muted">AC-RC : avec le responsable de circonscription · AC-RF : avec le représentant de la filiale · l’ordre peut changer d’une année à l’autre</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
+        ${box(`Baptêmes ${anLib(an)}`, T.t, fs(T))}
+        ${L.map(a => box(`${a.type} · ${jourCourt(a.date)}`, cnt(a.baptises || []).t, fs(cnt(a.baptises || [])))).join('')}
+        ${(() => { const p = B.filter(a => anneeServ(a.date) === an - 1).flatMap(a => a.baptises || []); return p.length ? box(`Rappel ${anLib(an - 1)}`, p.length, fs(cnt(p))) : ''; })()}</div>
+      ${L.length ? '' : `<div class="notice" style="margin-bottom:14px">Aucune assemblée de circonscription enregistrée pour ${anLib(an)}. Cliquez sur « + Assemblée de circonscription ».</div>`}
+      <datalist id="bPers">${pers.map(p => `<option value="${api.esc(lab(p))}">`).join('')}</datalist>
+      ${L.map(a => { const c = cnt(a.baptises || []);
+        return `<div class="card" data-ac="${a.id}" style="margin-bottom:14px">
+        <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+          <div><strong style="font-size:1.1rem">${a.type}</strong> <span class="muted">— ${api.esc(jourLong(a.date))}${a.lieu ? ' · ' + api.esc(a.lieu) : ''}</span>
+            <div class="small muted">${AC_TYPES[a.type] || ''}</div></div>
+          <div class="row" style="gap:6px;align-items:center"><span class="pill">${c.t} baptême${c.t > 1 ? 's' : ''} · ${fs(c)}</span>
+            <button class="btn" data-edit>Modifier</button><button class="btn ghost" data-del title="Supprimer cette assemblée">🗑</button></div></div>
+        <div class="table-wrap"><table class="list"><thead><tr><th>#</th><th>Nom</th><th>Prénom</th><th>Frère / sœur</th><th>Assemblée</th><th></th></tr></thead><tbody>
+          ${(a.baptises || []).map((x, i) => `<tr data-i="${i}"><td class="muted small">${i + 1}</td>
+            <td><input data-k="nom" value="${api.esc(x.nom || '')}" style="max-width:170px;padding:4px 6px"></td>
+            <td><input data-k="prenom" value="${api.esc(x.prenom || '')}" style="max-width:150px;padding:4px 6px"></td>
+            <td><select data-k="sexe" style="width:auto;padding:4px 6px"><option value="">—</option>${['Frère', 'Sœur'].map(v => `<option ${x.sexe === v ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td><select data-k="asm" style="width:auto;padding:4px 6px"><option value="">—</option>${[...new Set([...asms, x.asm].filter(Boolean))].map(v => `<option ${x.asm === v ? 'selected' : ''}>${api.esc(v)}</option>`).join('')}</select></td>
+            <td><button class="btn ghost" data-rm title="Retirer">✕</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted small">Aucun baptisé saisi.</td></tr>'}
+        </tbody></table></div>
+        <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><input list="bPers" data-add placeholder="Ajouter : tapez un nom (annuaire) ou « NOM Prénom »" style="max-width:380px">
+          <button class="btn" data-addb>+ Ajouter</button></div></div>`; }).join('')}
+      ${all.length ? `<div class="card"><strong>Par assemblée — ${anLib(an)}</strong>
+        <div class="table-wrap" style="margin-top:8px"><table class="list"><thead><tr><th>Assemblée</th><th style="text-align:right">Baptêmes</th><th style="text-align:right">Frères</th><th style="text-align:right">Sœurs</th><th>Noms</th></tr></thead><tbody>
+        ${Object.keys(PA).sort((a, b) => a.localeCompare(b, 'fr')).map(k => { const c = cnt(PA[k]); return `<tr><td><strong>${api.esc(k)}</strong></td><td style="text-align:right">${c.t}</td><td style="text-align:right">${c.f}</td><td style="text-align:right">${c.s}</td>
+          <td class="small">${PA[k].map(x => api.esc(`${(x.nom || '').toUpperCase()} ${x.prenom || ''}`.trim())).join(', ')}</td></tr>`; }).join('')}</tbody>
+        <tfoot><tr style="font-weight:700"><td>Total</td><td style="text-align:right">${T.t}</td><td style="text-align:right">${T.f}</td><td style="text-align:right">${T.s}</td><td></td></tr></tfoot></table></div></div>` : ''}`;
+    bindHeader(el);
+    const redraw = () => baptemesView(el, state);
+    const edit = async a => {
+      const r = await api.modal({title: a ? 'Modifier l’assemblée de circonscription' : 'Nouvelle assemblée de circonscription',
+        body: `<div class="stack" style="gap:10px">
+          ${Object.entries(AC_TYPES).map(([k, l]) => `<label><input type="radio" name="acT" value="${k}" ${(a ? a.type : (L.some(x => x.type === 'AC-RC') ? 'AC-RF' : 'AC-RC')) === k ? 'checked' : ''}> <strong>${k}</strong> — ${l}</label>`).join('')}
+          <label class="field"><span>Date</span><input type="date" id="acD" value="${a ? a.date : ''}" style="max-width:180px"></label>
+          <label class="field"><span>Lieu (facultatif)</span><input id="acL" value="${api.esc(a?.lieu || '')}"></label></div>`,
+        actions: [{label: 'Annuler', value: null}, {label: 'Enregistrer', kind: 'primary', onClick: b => {
+          const date = api.$('#acD', b).value; if (!date) { api.toast('Indiquez la date', 'error'); return false; }
+          return {type: api.$('input[name=acT]:checked', b).value, date, lieu: api.$('#acL', b).value.trim()}; }}]});
+      if (!r) return;
+      if (a) Object.assign(a, r); else B.push({id: api.uid(), ...r, baptises: []});
+      state.an = anneeServ(r.date); api.save(); redraw();
+    };
+    api.$('#bAn', el).onchange = e => { state.an = +e.target.value; redraw(); };
+    api.$('#bNew', el).onclick = () => edit(null);
+    for (const card of api.$$('[data-ac]', el)) {
+      const a = B.find(x => x.id === card.dataset.ac); a.baptises ??= [];
+      api.$('[data-edit]', card).onclick = () => edit(a);
+      api.$('[data-del]', card).onclick = async () => {
+        if (!await api.confirm('Supprimer', `Supprimer l’${a.type} du ${jourCourt(a.date)} et ses ${a.baptises.length} baptisé(s) ?`, 'Supprimer', true)) return;
+        B.splice(B.indexOf(a), 1); api.save(); redraw(); };
+      card.querySelectorAll('tbody [data-k]').forEach(x => x.addEventListener('change', () => {
+        const b = a.baptises[+x.closest('tr').dataset.i]; b[x.dataset.k] = x.dataset.k === 'nom' ? x.value.trim().toUpperCase() : x.value.trim(); api.save(); redraw(); }));
+      card.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => { a.baptises.splice(+x.closest('tr').dataset.i, 1); api.save(); redraw(); }));
+      const inp = api.$('[data-add]', card);
+      const add = () => {
+        const v = inp.value.trim(); if (!v) return; inp.value = '';
+        const p = pers.find(q => lab(q) === v);
+        if (p && B.some(x => (x.baptises || []).some(y => y.pid === p.id))) return api.toast(`${lab(p)} figure déjà parmi les baptisés`, 'error');
+        if (p) a.baptises.push({pid: p.id, nom: (p.nom || '').toUpperCase(), prenom: p.prenom || '', sexe: ['Frère', 'Sœur'].includes(p.civilite) ? p.civilite : '', asm: p.assemblee || ''});
+        else { const w = v.split(/\s+/), up = w.filter(x => x === x.toUpperCase() && /\p{L}/u.test(x));
+          const nom = up.length ? up.join(' ') : w[0], prenom = w.filter(x => !up.length ? x !== w[0] : !up.includes(x)).join(' ');
+          a.baptises.push({nom: nom.toUpperCase(), prenom, sexe: '', asm: ''}); }
+        api.save(); state.focus = a.id; redraw(); };
+      api.$('[data-addb]', card).onclick = add;
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+      inp.addEventListener('change', () => { if (pers.some(q => lab(q) === inp.value.trim())) add(); });
+      if (state.focus === a.id) { inp.focus(); state.focus = null; }
+    }
+  }
+
   // En-tête commun : Tableau de bord | Proclamateurs | Comptabilité
   function header(active) {
     return `<div class="page-head" style="margin-bottom:8px"><div><h1>📊 Circonscription</h1></div></div>
       <div class="tabs" style="margin-bottom:16px"><button data-view="dashboard" class="${active === 'dashboard' ? 'active' : ''}">Tableau de bord</button>
       <button data-view="proclamateurs" class="${active === 'proclamateurs' ? 'active' : ''}">Proclamateurs</button>
-      <button data-view="comptabilite" class="${active === 'comptabilite' ? 'active' : ''}">Comptabilité</button></div>`;
+      <button data-view="comptabilite" class="${active === 'comptabilite' ? 'active' : ''}">Comptabilité</button>
+      <button data-view="baptemes" class="${active === 'baptemes' ? 'active' : ''}">Baptêmes</button></div>`;
   }
   function bindHeader(el) {
     api.$$('[data-view]', el).forEach(b => b.addEventListener('click', () => api.navigate(b.dataset.view === 'dashboard' ? '#/circonscription' : '#/circonscription/' + b.dataset.view)));
@@ -1604,6 +1814,7 @@ App.circo = (() => {
 
   function mount(el, _api, rest) {
     if (rest[0] === 'assemblee' && rest[1]) return assembleeView(el, decodeURIComponent(rest.slice(1).join('/')));
+    if (rest[0] === 'baptemes') { App.circo.bstate ??= {}; return baptemesView(el, App.circo.bstate); }
     if (rest[0] === 'comptabilite') { App.circo.cstate ??= {}; return comptaView(el, App.circo.cstate); }
     if (rest[0] === 'proclamateurs') { App.circo.pstate ??= {}; if (rest[1]) App.circo.pstate.asm = decodeURIComponent(rest[1]); return proclamateursView(el, App.circo.pstate); }
     App.circo.state ??= {group: 'Effectifs', compare: true, evo: 'procl', bar: 'procl', edit: false, cycle: null};
