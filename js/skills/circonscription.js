@@ -222,6 +222,112 @@ App.circo = (() => {
   }
 
   /* ---------- Tableau de bord ---------- */
+  /* ---------- Bilan PDF du cycle pour toute la circonscription : 1 page A4 paysage ----------
+     Chiffres clés, tableau de tous les indicateurs par assemblée (écart avec le cycle précédent),
+     totaux, pourcentages, moyennes, remarques et baptêmes de l'année de service. */
+  async function cyclePdf(c, withGroups) {
+    const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
+    const S = store(), prev = prevCycle(c), tot = totals(c), asmsAll = S.assemblees, asmsN = asmsAll.filter(a => !isGroup(a));
+    const doc = await PDFDocument.create(), R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold), I = await doc.embedFont(StandardFonts.HelveticaOblique);
+    doc.setTitle(T(`Bilan du cycle ${c.code}`));
+    const W = 841.89, H = 595.28, M = 22, page = doc.addPage([W, H]);
+    const hex = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
+    const ink = hex('#1f2328'), mute = hex('#6b7280'), blue = hex('#1f3f66'), line = hex('#d0d7de'), zebra = hex('#f3f5f8'), green = hex('#1a7f37'), red = hex('#c0392b'), head = hex('#e4ebf3');
+    const tw = (t, f, z) => f.widthOfTextAtSize(T(t), z);
+    const fit = (t, f, z, w) => { t = T(t); if (f.widthOfTextAtSize(t, z) <= w) return t; while (t.length > 1 && f.widthOfTextAtSize(t + '…', z) > w) t = t.slice(0, -1); return t + '…'; };
+    const txt = (t, x, y, o = {}) => page.drawText(o.w ? fit(t, o.font || R, o.size || 8, o.w) : T(t), {x, y, size: o.size || 8, font: o.font || R, color: o.color || ink});
+    const right = (t, xr, y, o = {}) => txt(t, xr - tw(t, o.font || R, o.size || 8), y, o);
+    const dTxt = d => `${d > 0 ? '+' : ''}${fmt(d)}`;
+    // en-tête
+    let y = H - M - 14;
+    txt(`Bilan du cycle ${c.code}`, M, y, {font: B, size: 15, color: blue});
+    txt(c.libelle || '', M + tw(`Bilan du cycle ${c.code}`, B, 15) + 10, y + 1, {size: 9, color: mute, w: 330});
+    if (App.circoNom()) right(App.circoNom(), W - M, y + 1, {font: B, size: 10, color: blue});
+    y -= 6; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: 1, color: blue});
+    const an = parseInt(c.code, 10) - 1, acs = (S.baptemes || []).filter(a => { const [yy, mm] = a.date.split('-').map(Number); return (mm >= 9 ? yy : yy - 1) === an; }).sort((a, b) => a.date.localeCompare(b.date));
+    const nbAC = acs.reduce((t, a) => t + (a.baptises || []).length, 0);
+    // chiffres clés
+    const kpi = [['Proclamateurs', 'procl'], ['Pionniers permanents', 'pp', 'procl'], ['Pionniers auxiliaires', 'pa', 'procl'], ['Études bibliques', 'eb'], ['Assistance semaine', 'sem', 'procl'], ['Assistance week-end', 'we', 'procl'], ['Non parcourus', 'nonparc', 'terr'], ['Baptêmes', 'bapt']];
+    const kw = (W - 2 * M - (kpi.length - 1) * 6) / kpi.length, kh = 40; y -= 6 + kh;
+    kpi.forEach(([lab, k, of], i) => {
+      const x = M + i * (kw + 6), ac = k === 'bapt' && tot.bapt === null && acs.length, v = ac ? nbAC : tot[k], cd = ac ? null : commonDelta(c, prev, k);
+      page.drawRectangle({x, y, width: kw, height: kh, color: hex('#f6f8fb'), borderColor: line, borderWidth: .6});
+      txt(lab, x + 6, y + kh - 11, {size: 7, color: mute, w: kw - 12});
+      txt(v === null ? '—' : fmt(v), x + 6, y + 9, {font: B, size: 15, color: blue});
+      const sub = [ac ? `AC ${an}-${an + 1}` : '', of && v !== null && tot[of] ? `${Math.round(v / tot[of] * 100)} % ${of === 'terr' ? 'des terr.' : 'des procl.'}` : '', cd && cd.d ? `${dTxt(cd.d)} / ${prev.code}` : ''].filter(Boolean);
+      sub.forEach((t, j) => right(t, x + kw - 5, y + 18 - j * 9, {size: 6.5, color: t.includes(' / ') ? (cd.d > 0 ? green : red) : mute}));
+    });
+    // bas de page : baptêmes de l'année de service et remarques
+    const notes = asmsAll.filter(a => (c.notes || {})[a]).map(a => [a, c.notes[a]]);
+    const bottomH = (acs.length || notes.length) ? 16 + Math.max(acs.length ? acs.length * 2 + 1 : 0, Math.min(notes.length, 7)) * 9 + 6 : 0;
+    // tableau des indicateurs
+    const rowsA = asmsAll, nameW = 120, colW = (W - 2 * M - nameW) / IND.length;
+    const tableTop = y - 10, tableBottom = M + 14 + bottomH + 22;
+    const nRows = rowsA.length + 3, rowH = Math.max(10, Math.min(prev ? 17 : 13, (tableTop - tableBottom - 26) / nRows));
+    const vz = Math.min(8, rowH * .55), dz = Math.min(5.8, rowH * .38);
+    y = tableTop;
+    // ligne des groupes
+    let gx = M + nameW;
+    for (const g of GROUPS) { const k = IND.filter(i => i.g === g).length, w = k * colW;
+      page.drawRectangle({x: gx, y: y - 11, width: w - 1, height: 11, color: blue});
+      const t = fit(g, B, 6.8, w - 4); txt(t, gx + (w - tw(t, B, 6.8)) / 2, y - 8.5, {font: B, size: 6.8, color: rgb(1, 1, 1)}); gx += w; }
+    y -= 11;
+    page.drawRectangle({x: M, y: y - 13, width: W - 2 * M, height: 13, color: head});
+    txt('Assemblée', M + 3, y - 9.5, {font: B, size: 7});
+    const ABRV = {vsem: 'V. sem', vwe: 'V. WE', memorial: 'Mémo.', terr: 'Terr.', nonparc: 'N. parc.', totalin: 'Tot. IN', redact: 'R. act.', reprim: 'Répr.', reint: 'Réint.'};
+    IND.forEach((ind, j) => { const t = fit(ABRV[ind.k] || ind.l, B, 6.3, colW - 2); right(t, M + nameW + (j + 1) * colW - 2, y - 9.5, {font: B, size: 6.3}); });
+    y -= 13;
+    const valCell = (x, v, p, bold, col) => {
+      const yy = y - rowH / 2 - (prev && p !== null && v !== null && v !== p ? 0 : vz * .35);
+      if (v !== null) right(fmt(v), x - 2, prev && p !== null && v !== p ? y - rowH * .48 : yy, {size: vz, font: bold ? B : R, color: col || ink});
+      if (prev && v !== null && p !== null && v !== p) right(dTxt(v - p), x - 2, y - rowH * .48 - dz - 1, {size: dz, color: v > p ? green : red});
+    };
+    rowsA.forEach((a, r) => {
+      if (r % 2) page.drawRectangle({x: M, y: y - rowH, width: W - 2 * M, height: rowH, color: zebra});
+      const g = isGroup(a);
+      txt((g ? '  ↳ ' : '') + a, M + 3, y - rowH / 2 - vz * .35, {size: Math.min(vz, 7.4), font: g ? I : B, color: g ? mute : ink, w: nameW - 5});
+      IND.forEach((ind, j) => valCell(M + nameW + (j + 1) * colW, n(c.valeurs[a]?.[ind.k]), prev ? n(prev.valeurs[a]?.[ind.k]) : null, false, g ? mute : null));
+      y -= rowH;
+    });
+    // total, pourcentages, moyennes
+    page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: 1, color: blue});
+    page.drawRectangle({x: M, y: y - rowH, width: W - 2 * M, height: rowH, color: head});
+    txt(withGroups ? 'Total (groupes compris)' : 'Total circonscription', M + 3, y - rowH / 2 - vz * .35, {size: vz, font: B, w: nameW - 5});
+    IND.forEach((ind, j) => { const x = M + nameW + (j + 1) * colW, v = tot[ind.k], cd = commonDelta(c, prev, ind.k);
+      if (v !== null) right(fmt(v), x - 2, cd && cd.d ? y - rowH * .48 : y - rowH / 2 - vz * .35, {size: vz, font: B, color: blue});
+      if (cd && cd.d) right(dTxt(cd.d), x - 2, y - rowH * .48 - dz - 1, {size: dz, color: cd.d > 0 ? green : red}); });
+    y -= rowH;
+    const small = Math.min(9.5, rowH * .75), sz = Math.min(6.5, vz - .5);
+    txt('% procl. / territoires', M + 3, y - small + 2.5, {size: sz, color: mute, w: nameW - 5});
+    IND.forEach((ind, j) => { if (!RATIO[ind.k]) return; let a = 0, b = 0; for (const x of counted()) { const v = n(c.valeurs[x]?.[ind.k]), d = n(c.valeurs[x]?.[RATIO[ind.k]]); if (v !== null && d) { a += v; b += d; } }
+      if (b) right(Math.round(a / b * 100) + ' %', M + nameW + (j + 1) * colW - 2, y - small + 2.5, {size: sz, color: mute}); });
+    y -= small;
+    txt('Moyenne par assemblée', M + 3, y - small + 2.5, {size: sz, color: mute, w: nameW - 5});
+    IND.forEach((ind, j) => { const vals = asmsN.map(a => n(c.valeurs[a]?.[ind.k])).filter(v => v !== null);
+      if (vals.length) right(fmt(Math.round(vals.reduce((x, v) => x + v, 0) / vals.length * 10) / 10), M + nameW + (j + 1) * colW - 2, y - small + 2.5, {size: sz, color: mute}); });
+    y -= small;
+    txt(prev ? `Sous chaque chiffre : écart avec le cycle ${prev.code} (vert : hausse, rouge : baisse). Écarts des totaux calculés sur les assemblées renseignées aux deux cycles.` : 'Pas de cycle précédent pour comparer.', M, y - 8, {size: 6, color: mute});
+    txt('V. sem / V. WE : assistance aux réunions de la visite · Mémo. : Mémorial · Terr. : territoires · N. parc. : non parcourus depuis 1 an · R. act. : redevenus actifs · AC : assemblées de circonscription', M, y - 15, {size: 6, color: mute});
+    // bloc du bas
+    if (bottomH) {
+      let by = M + 14 + bottomH - 10; const colA = acs.length ? (notes.length ? (W - 2 * M) * .45 : W - 2 * M) : 0;
+      if (acs.length) {
+        const all = acs.flatMap(a => a.baptises || []), f = all.filter(x => x.sexe === 'Frère').length, s2 = all.filter(x => x.sexe === 'Sœur').length;
+        txt(`Baptêmes aux assemblées de circonscription ${an}-${an + 1} : ${all.length} (${f} frère${f > 1 ? 's' : ''}, ${s2} sœur${s2 > 1 ? 's' : ''})`, M, by, {font: B, size: 8, color: blue, w: colA - 8});
+        let yy = by - 10;
+        for (const a of acs) { const l = a.baptises || [], ff = l.filter(x => x.sexe === 'Frère').length, ss = l.filter(x => x.sexe === 'Sœur').length;
+          txt(`${a.type} du ${new Date(a.date + 'T12:00').toLocaleDateString('fr-FR', {day: 'numeric', month: 'long', year: 'numeric'})}${a.lieu ? ' (' + a.lieu + ')' : ''} : ${l.length} baptême${l.length > 1 ? 's' : ''} — ${ff} F, ${ss} S`, M, yy, {font: B, size: 7, w: colA - 8});
+          txt(l.map(x => `${(x.nom || '').toUpperCase()} ${x.prenom || ''}${x.asm ? ' (' + x.asm + ')' : ''}`.trim()).join(', ') || '—', M + 8, yy - 9, {size: 6.5, color: mute, w: colA - 16}); yy -= 18; }
+      }
+      if (notes.length) { const x0 = M + colA + (colA ? 10 : 0), w = W - M - x0;
+        txt(`Remarques du cycle ${c.code}`, x0, by, {font: B, size: 8, color: blue}); let yy = by - 10;
+        notes.slice(0, 7).forEach(([a, t], k) => { const lab = a + ' : '; txt(lab, x0, yy, {font: B, size: 6.8}); txt(k === 6 && notes.length > 7 ? `… et ${notes.length - 6} autre(s) remarque(s)` : t, x0 + tw(lab, B, 6.8), yy, {size: 6.8, w: w - tw(lab, B, 6.8)}); yy -= 9; });
+      }
+    }
+    page.drawText(T(`Mon Bureau${App.circoPied()} · bilan du cycle ${c.code} · ${asmsN.length} assemblées · imprimé le ${api.dateLongue()}`), {x: M, y: 10, size: 6.5, font: R, color: mute});
+    return doc.save();
+  }
+
   function dashboard(el, state) {
     const S = store(), cycles = sortedCycles();
     if (!cycles.length) {
@@ -247,7 +353,7 @@ App.circo = (() => {
     };
     el.innerHTML = `${header('dashboard')}<div class="page-head"><div><p style="margin:0" class="muted">${api.esc(c.libelle || 'Cycle ' + c.code)}</p></div>
       <div class="row"><select id="cCycle" style="width:auto">${cycles.map(x => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>Cycle ${x.code}</option>`).join('')}</select>
-        <button class="btn" id="cNew">+ Cycle</button><button class="btn" id="cImp">Importer</button><button class="btn" id="cCsv">Exporter (CSV)</button>
+        <button class="btn" id="cNew">+ Cycle</button><button class="btn" id="cImp">Importer</button><button class="btn" id="cCsv">Exporter (CSV)</button><button class="btn" id="cPdf" title="Tous les indicateurs du cycle, par assemblée, sur une page A4 paysage">Bilan PDF du cycle</button>
         <button class="btn ${state.edit ? 'primary' : ''}" id="cEdit">${state.edit ? 'Terminer la saisie' : 'Saisir / corriger'}</button></div></div>
       <div class="grid" style="margin-bottom:16px">
         ${[['procl', 'Proclamateurs'], ['pp', 'Pionniers permanents'], ['sem', 'Assistance semaine'], ['bapt', 'Baptêmes']].map(([k, lab]) => `
@@ -301,6 +407,10 @@ App.circo = (() => {
     api.$('#cImp', el).addEventListener('click', () => importFlow(redraw));
     api.$('#cNew', el).addEventListener('click', () => newCycle(nc => { state.cycle = nc.id; state.edit = true; redraw(); }));
     api.$('#cEdit', el).addEventListener('click', () => { state.edit = !state.edit; if (!state.edit) api.toast('Saisie enregistrée'); redraw(); });
+    api.$('#cPdf', el).addEventListener('click', async () => {
+      try { api.download(App.pdf.fileName(`Bilan circonscription ${c.code}`) + '.pdf', await cyclePdf(c, state.groups), 'application/pdf'); }
+      catch (e) { console.error(e); api.toast('PDF impossible : ' + e.message, 'error'); }
+    });
     api.$('#cCsv', el).addEventListener('click', () => {
       const rows = [['Assemblée', ...IND.map(i => i.t || i.l), 'Remarques']];
       for (const a of S.assemblees) rows.push([a, ...IND.map(i => fmt(n(c.valeurs[a]?.[i.k]))), c.notes[a] || '']);
