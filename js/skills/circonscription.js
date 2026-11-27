@@ -225,9 +225,30 @@ App.circo = (() => {
   /* ---------- Bilan PDF du cycle pour toute la circonscription : 1 page A4 paysage ----------
      Chiffres clés, tableau de tous les indicateurs par assemblée (écart avec le cycle précédent),
      totaux, pourcentages, moyennes, remarques et baptêmes de l'année de service. */
+  /* Baptêmes de l'onglet Baptêmes rattachés à un cycle : assemblées de circonscription tenues pendant le cycle.
+     Période lue dans le libellé (« de septembre 2026 à mars 2027 »), sinon A = septembre → février, B = mars → août. */
+  const MOISN = {janvier: 1, fevrier: 2, mars: 3, avril: 4, mai: 5, juin: 6, juillet: 7, aout: 8, septembre: 9, octobre: 10, novembre: 11, decembre: 12};
+  function cyclePeriode(c) {
+    const m = /de\s+([a-zéû]+)\s+(\d{4})\s+(?:a|à)\s+([a-zéû]+)\s+(\d{4})/i.exec(api.norm(c.libelle || ''));
+    if (m && MOISN[m[1]] && MOISN[m[3]]) return [`${m[2]}-${String(MOISN[m[1]]).padStart(2, '0')}-01`, `${m[4]}-${String(MOISN[m[3]]).padStart(2, '0')}-31`];
+    const y = +(/(\d{4})/.exec(c.code || '') || [])[1]; if (!y) return null;
+    return /B/i.test(c.code.replace(/^\D*\d{4}/, '')) ? [`${y}-03-01`, `${y}-08-31`] : [`${y - 1}-09-01`, `${y}-02-29`];
+  }
+  function baptCycle(c) {
+    const per = cyclePeriode(c); if (!per) return null;
+    const acs = (store().baptemes || []).filter(a => a.date && a.date >= per[0] && a.date <= per[1]);
+    if (!acs.length) return null;
+    const par = {}; for (const x of acs.flatMap(a => a.baptises || [])) { const k = store().assemblees.find(a => ckey(a) === ckey(x.asm || '')) || x.asm || '—'; par[k] = (par[k] || 0) + 1; }
+    return {acs, par, total: acs.reduce((t, a) => t + (a.baptises || []).length, 0)};
+  }
+
   async function cyclePdf(c, withGroups) {
     const {PDFDocument, StandardFonts, rgb} = window.PDFLib, T = t => App.pdf.clean(String(t ?? ''));
-    const S = store(), prev = prevCycle(c), tot = totals(c), asmsAll = S.assemblees, asmsN = asmsAll.filter(a => !isGroup(a));
+    let prev = prevCycle(c); const S = store(), asmsAll = S.assemblees, asmsN = asmsAll.filter(a => !isGroup(a));
+    // colonne « Bapt. » : si le cycle n'a aucun chiffre de baptêmes, on prend ceux de l'onglet Baptêmes (assemblées de circonscription du cycle)
+    const withAC = cy => { if (!cy) return cy; const bc = baptCycle(cy); if (!bc || counted().some(a => n(cy.valeurs[a]?.bapt) !== null)) return cy;
+      const v = {}; for (const a of Object.keys(cy.valeurs || {})) v[a] = {...cy.valeurs[a]}; for (const a of asmsN) { v[a] ??= {}; v[a].bapt = bc.par[a] || 0; } return {...cy, valeurs: v, $ac: bc}; };
+    c = withAC(c); prev = withAC(prev); const tot = totals(c);
     const doc = await PDFDocument.create(), R = await doc.embedFont(StandardFonts.Helvetica), B = await doc.embedFont(StandardFonts.HelveticaBold), I = await doc.embedFont(StandardFonts.HelveticaOblique);
     doc.setTitle(T(`Bilan du cycle ${c.code}`));
     const W = 841.89, H = 595.28, M = 22, page = doc.addPage([W, H]);
@@ -244,17 +265,23 @@ App.circo = (() => {
     txt(c.libelle || '', M + tw(`Bilan du cycle ${c.code}`, B, 15) + 10, y + 1, {size: 9, color: mute, w: 330});
     if (App.circoNom()) right(App.circoNom(), W - M, y + 1, {font: B, size: 10, color: blue});
     y -= 6; page.drawLine({start: {x: M, y}, end: {x: W - M, y}, thickness: 1, color: blue});
-    const an = parseInt(c.code, 10) - 1, acs = (S.baptemes || []).filter(a => { const [yy, mm] = a.date.split('-').map(Number); return (mm >= 9 ? yy : yy - 1) === an; }).sort((a, b) => a.date.localeCompare(b.date));
+    // année de service du cycle (2027A ou 2027B → 2026-2027) ; sans assemblée de circonscription saisie pour cette année,
+    // on reprend la dernière année qui en a (les baptêmes les plus récents)
+    const sy = iso => { const [yy, mm] = iso.split('-').map(Number); return mm >= 9 ? yy : yy - 1; };
+    const yc = +(/(\d{4})/.exec(c.code || c.libelle || '') || [])[1], anC = yc ? yc - 1 : sy(new Date().toISOString().slice(0, 10));
+    const ansB = [...new Set((S.baptemes || []).filter(a => a.date).map(a => sy(a.date)))].sort((x, y2) => y2 - x);
+    const an = ansB.includes(anC) ? anC : (ansB.find(x => x < anC) ?? ansB[0] ?? anC);
+    const acs = (S.baptemes || []).filter(a => a.date && sy(a.date) === an).sort((a, b) => a.date.localeCompare(b.date));
     const nbAC = acs.reduce((t, a) => t + (a.baptises || []).length, 0);
     // chiffres clés
     const kpi = [['Proclamateurs', 'procl'], ['Pionniers permanents', 'pp', 'procl'], ['Pionniers auxiliaires', 'pa', 'procl'], ['Études bibliques', 'eb'], ['Assistance semaine', 'sem', 'procl'], ['Assistance week-end', 'we', 'procl'], ['Non parcourus', 'nonparc', 'terr'], ['Baptêmes', 'bapt']];
     const kw = (W - 2 * M - (kpi.length - 1) * 6) / kpi.length, kh = 40; y -= 6 + kh;
     kpi.forEach(([lab, k, of], i) => {
-      const x = M + i * (kw + 6), ac = k === 'bapt' && tot.bapt === null && acs.length, v = ac ? nbAC : tot[k], cd = ac ? null : commonDelta(c, prev, k);
+      const x = M + i * (kw + 6), ac = k === 'bapt' && c.$ac, v = tot[k], cd = commonDelta(c, prev, k);
       page.drawRectangle({x, y, width: kw, height: kh, color: hex('#f6f8fb'), borderColor: line, borderWidth: .6});
       txt(lab, x + 6, y + kh - 11, {size: 7, color: mute, w: kw - 12});
       txt(v === null ? '—' : fmt(v), x + 6, y + 9, {font: B, size: 15, color: blue});
-      const sub = [ac ? `AC ${an}-${an + 1}` : '', of && v !== null && tot[of] ? `${Math.round(v / tot[of] * 100)} % ${of === 'terr' ? 'des terr.' : 'des procl.'}` : '', cd && cd.d ? `${dTxt(cd.d)} / ${prev.code}` : ''].filter(Boolean);
+      const sub = [ac ? 'selon les AC' : '', of && v !== null && tot[of] ? `${Math.round(v / tot[of] * 100)} % ${of === 'terr' ? 'des terr.' : 'des procl.'}` : '', cd && cd.d ? `${dTxt(cd.d)} / ${prev.code}` : ''].filter(Boolean);
       sub.forEach((t, j) => right(t, x + kw - 5, y + 18 - j * 9, {size: 6.5, color: t.includes(' / ') ? (cd.d > 0 ? green : red) : mute}));
     });
     // bas de page : baptêmes de l'année de service et remarques
@@ -262,7 +289,7 @@ App.circo = (() => {
     const bottomH = (acs.length || notes.length) ? 16 + Math.max(acs.length ? acs.length * 2 + 1 : 0, Math.min(notes.length, 7)) * 9 + 6 : 0;
     // tableau des indicateurs
     const rowsA = asmsAll, nameW = 120, colW = (W - 2 * M - nameW) / IND.length;
-    const tableTop = y - 10, tableBottom = M + 14 + bottomH + 22;
+    const tableTop = y - 10, tableBottom = M + 14 + bottomH + 28;
     const nRows = rowsA.length + 3, rowH = Math.max(10, Math.min(prev ? 17 : 13, (tableTop - tableBottom - 26) / nRows));
     const vz = Math.min(8, rowH * .55), dz = Math.min(5.8, rowH * .38);
     y = tableTop;
@@ -307,6 +334,7 @@ App.circo = (() => {
       if (vals.length) right(fmt(Math.round(vals.reduce((x, v) => x + v, 0) / vals.length * 10) / 10), M + nameW + (j + 1) * colW - 2, y - small + 2.5, {size: sz, color: mute}); });
     y -= small;
     txt(prev ? `Sous chaque chiffre : écart avec le cycle ${prev.code} (vert : hausse, rouge : baisse). Écarts des totaux calculés sur les assemblées renseignées aux deux cycles.` : 'Pas de cycle précédent pour comparer.', M, y - 8, {size: 6, color: mute});
+    if (c.$ac) { const hors = Object.entries(c.$ac.par).filter(([a]) => !asmsN.includes(a)); if (hors.length) txt(`Colonne Bapt. d’après l’onglet Baptêmes. Assemblée non reconnue : ${hors.map(([a, v]) => `${a === '—' ? 'sans assemblée' : a} (${v})`).join(', ')} — à corriger dans l’onglet Baptêmes.`, M, y - 22, {size: 6, color: red, w: W - 2 * M}); }
     txt('V. sem / V. WE : assistance aux réunions de la visite · Mémo. : Mémorial · Terr. : territoires · N. parc. : non parcourus depuis 1 an · R. act. : redevenus actifs · AC : assemblées de circonscription', M, y - 15, {size: 6, color: mute});
     // bloc du bas
     if (bottomH) {

@@ -221,8 +221,8 @@ App.annuaire = (() => {
       <label class="field"><span>Civilité</span><select name="civilite"><option value=""></option>${['Frère', 'Sœur'].map(v => `<option ${p.civilite === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="field"><span>Prénom</span><input type="text" name="prenom" value="${api.esc(p.prenom)}"></label>
       <label class="field"><span>Nom</span><input type="text" name="nom" value="${api.esc(p.nom)}"></label>
-      <label class="field"><span>Date de naissance</span><input type="date" name="naissance" value="${api.esc(p.naissance)}" max="${new Date().toISOString().slice(0, 10)}"></label>
-      <label class="field"><span>Date de baptême</span><input type="date" name="bapteme" value="${api.esc(p.bapteme)}" max="${new Date().toISOString().slice(0, 10)}"></label>
+      <label class="field"><span>Date de naissance</span><span class="row" style="gap:4px;flex-wrap:nowrap"><input type="date" name="naissance" value="${api.esc(p.naissance)}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1"><button type="button" class="btn ghost" data-clr="naissance" title="Effacer la date" style="padding:4px 8px">✕</button></span></label>
+      <label class="field"><span>Date de baptême</span><span class="row" style="gap:4px;flex-wrap:nowrap"><input type="date" name="bapteme" value="${api.esc(p.bapteme)}" max="${new Date().toISOString().slice(0, 10)}" style="flex:1"><button type="button" class="btn ghost" data-clr="bapteme" title="Effacer la date" style="padding:4px 8px">✕</button></span></label>
       <label class="field"><span>Fonction</span><select name="fonction"><option value=""></option>${FONCTIONS.map(v => `<option ${p.fonction === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="field"><span>Statut</span><select name="statut">${STATUTS.map(([v, l]) => `<option value="${v}" ${(p.statut || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field"><span>Portable</span><input type="tel" name="telephone" value="${api.esc(p.telephone)}"></label>
@@ -256,6 +256,8 @@ App.annuaire = (() => {
     }});
     return api.modal({title: isNew ? 'Nouvelle personne' : fullName(p), body, actions, onMount: b => {
       api.$('[name=prenom]', b).focus();
+      // bouton ✕ : efface une date mal saisie (le champ date ne se vide pas facilement au clavier)
+      api.$$('[data-clr]', b).forEach(x => x.addEventListener('click', e => { e.preventDefault(); const i = api.$(`[name=${x.dataset.clr}]`, b); i.value = ''; i.dispatchEvent(new Event('input', {bubbles: true})); i.dispatchEvent(new Event('change', {bubbles: true})); }));
       const img = api.$('#pPhoto', b), del = api.$('#pPhotoDel', b), add = api.$('#pPhotoAdd', b);
       add.onclick = async () => { const [f] = await pickImages(false); if (!f) return; try { photo = await resizePhoto(f); photoChanged = true; img.src = photo; img.style.display = ''; del.style.display = ''; add.textContent = 'Changer la photo'; } catch { api.toast('Cette image n’a pas pu être lue.', 'error'); } };
       del.onclick = () => { photo = null; photoChanged = true; img.style.display = 'none'; del.style.display = 'none'; add.textContent = 'Ajouter une photo'; };
